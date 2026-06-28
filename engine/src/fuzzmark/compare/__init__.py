@@ -1,12 +1,14 @@
-"""Tiered image comparison: normalize, align, perceptual diff, structural diff, masks.
+"""Tiered image comparison: normalize, align, perceptual diff, masks.
 
-MVP: single-threshold SSIM verdict (pass / change). The align / structural / masks
-tiers from spec §5.7 come later.
+SSIM is the perceptual diff; the alignment pass (spec §5.7 step 2) rescues
+small global pixel shifts as `size-shift` rather than `change`. Structural
+diff and the smart layout-break classification are later Phase 3 work.
 """
 
+from .align import Alignment, try_align_to_baseline
 from .diff import DEFAULT_THRESHOLD, compare_images
 from .masks import MaskRegion, apply_masks, clamp_region, parse_mask_spec
-from .result import CHANGE, MVP_VERDICTS, PASS, CompareResult
+from .result import CHANGE, PASS, SIZE_SHIFT, VERDICTS, CompareResult
 
 __all__ = [
     "compare_images",
@@ -14,9 +16,12 @@ __all__ = [
     "DEFAULT_THRESHOLD",
     "PASS",
     "CHANGE",
-    "MVP_VERDICTS",
+    "SIZE_SHIFT",
+    "VERDICTS",
     "MaskRegion",
     "apply_masks",
     "clamp_region",
     "parse_mask_spec",
+    "Alignment",
+    "try_align_to_baseline",
 ]

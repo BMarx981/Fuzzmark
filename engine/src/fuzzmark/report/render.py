@@ -13,11 +13,11 @@ import shutil
 from pathlib import Path
 from typing import Iterable
 
-from ..compare import DEFAULT_THRESHOLD, PASS, MaskRegion, compare_images
+from ..compare import CHANGE, DEFAULT_THRESHOLD, PASS, SIZE_SHIFT, MaskRegion, compare_images
 from .models import NO_BASELINE, Report, ReportEntry
 
 
-_VERDICT_ORDER = {"change": 0, NO_BASELINE: 1, "error": 2, PASS: 3}
+_VERDICT_ORDER = {CHANGE: 0, SIZE_SHIFT: 1, NO_BASELINE: 2, "error": 3, PASS: 4}
 _IMAGES_SUBDIR = "images"
 
 
@@ -238,7 +238,8 @@ _PAGE = """<!doctype html>
 <style>
   :root {{
     --bg: #fbfbfb; --fg: #1a1a1a; --muted: #6b7280; --line: #e5e7eb;
-    --pass: #16a34a; --change: #dc2626; --no-baseline: #6b7280; --error: #b45309;
+    --pass: #16a34a; --change: #dc2626; --size-shift: #d97706;
+    --no-baseline: #6b7280; --error: #b45309;
   }}
   * {{ box-sizing: border-box; }}
   body {{ margin: 0; font: 14px/1.5 -apple-system, system-ui, sans-serif;
@@ -250,6 +251,7 @@ _PAGE = """<!doctype html>
           border-radius: 999px; font-size: 12px; color: white; }}
   .chip-pass {{ background: var(--pass); }}
   .chip-change {{ background: var(--change); }}
+  .chip-size-shift {{ background: var(--size-shift); }}
   .chip-no-baseline {{ background: var(--no-baseline); }}
   .chip-error {{ background: var(--error); }}
   .entry {{ background: white; border: 1px solid var(--line); border-radius: 8px;

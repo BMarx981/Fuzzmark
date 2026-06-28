@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 from fuzzmark.capture import capture_page
-from fuzzmark.compare import CHANGE, PASS, compare_images
+from fuzzmark.compare import PASS, compare_images
 from fuzzmark.driver import CAPTURE, VISIT, FlowStep, Test, run_flow
 
 
@@ -84,7 +84,7 @@ def test_breakage_fixture_is_caught(
     capture_page(url, candidate)
 
     result = compare_images(baseline_capture, candidate, threshold=DOD_THRESHOLD)
-    assert result.verdict == CHANGE, (
-        f"{filename}: expected 'change' at threshold {DOD_THRESHOLD}, "
+    assert result.verdict != PASS, (
+        f"{filename}: expected a non-pass verdict at threshold {DOD_THRESHOLD}, "
         f"got {result.verdict!r} (score {result.score:.6f})"
     )
