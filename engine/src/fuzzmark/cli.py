@@ -28,10 +28,11 @@ def _cmd_extract(args: argparse.Namespace) -> None:
     project = _load_project_arg(args)
     session = _resolve_session_arg(args, project)
     scan_path = _resolve_scan_arg(args, project)
+    reveal = max(0, int(getattr(args, "reveal", 0) or 0))
     if scan_path:
         site_map = json.loads(open(scan_path, encoding="utf-8").read())
         extractor = lambda url: extract_fields(
-            url, headless=not args.headed, session=session
+            url, headless=not args.headed, session=session, reveal=reveal
         )
         payload = extract_site(site_map, extractor=extractor, include=args.include or None)
     else:
@@ -40,7 +41,7 @@ def _cmd_extract(args: argparse.Namespace) -> None:
             raise SystemExit(
                 "extract: pass a URL, --scan <site-map.json>, or --project <project.json>"
             )
-        fields = extract_fields(url, headless=not args.headed, session=session)
+        fields = extract_fields(url, headless=not args.headed, session=session, reveal=reveal)
         payload = {
             "url": url,
             "field_count": len(fields),
@@ -56,10 +57,11 @@ def _cmd_suggest(args: argparse.Namespace) -> None:
     tables = merge_tables(load_custom_tables(tables_path)) if tables_path else None
     session = _resolve_session_arg(args, project)
     scan_path = _resolve_scan_arg(args, project)
+    reveal = max(0, int(getattr(args, "reveal", 0) or 0))
     if scan_path:
         site_map = json.loads(open(scan_path, encoding="utf-8").read())
         extractor = lambda url: extract_fields(
-            url, headless=not args.headed, session=session
+            url, headless=not args.headed, session=session, reveal=reveal
         )
         site = extract_site(site_map, extractor=extractor, include=args.include or None)
         payload = suggest_site(site, tables=tables)
@@ -69,7 +71,7 @@ def _cmd_suggest(args: argparse.Namespace) -> None:
             raise SystemExit(
                 "suggest: pass a URL, --scan <site-map.json>, or --project <project.json>"
             )
-        fields = extract_fields(url, headless=not args.headed, session=session)
+        fields = extract_fields(url, headless=not args.headed, session=session, reveal=reveal)
         items = []
         for field in fields:
             suggestions = suggest(field, tables=tables)
@@ -406,6 +408,13 @@ def main(argv: list[str] | None = None) -> None:
         metavar="PATH",
         help="Replay a Playwright storage_state JSON for authenticated extraction",
     )
+    extract.add_argument(
+        "--reveal",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Active discovery: click up to N reveal-triggers (aria-expanded, closed <details>) and merge newly-mounted fields. Default 0 (passive only).",
+    )
     _add_project_arg(extract)
     extract.set_defaults(func=_cmd_extract)
 
@@ -442,6 +451,13 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         metavar="PATH",
         help="Replay a Playwright storage_state JSON for authenticated extraction",
+    )
+    suggest_p.add_argument(
+        "--reveal",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Active discovery: click up to N reveal-triggers and merge newly-mounted fields before suggesting. Default 0 (passive only).",
     )
     _add_project_arg(suggest_p)
     suggest_p.set_defaults(func=_cmd_suggest)

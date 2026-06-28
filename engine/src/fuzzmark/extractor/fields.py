@@ -7,6 +7,14 @@ recurses into same-origin iframes. Non-native widgets are mapped onto the
 same (kind, type) taxonomy as natives so the suggestion engine works
 without changes. Selectors emitted across shadow or iframe boundaries are
 joined with ` >>> ` so the driver can later resolve them per hop.
+
+Passing `reveal=N` runs an active discovery pass after the passive walk:
+up to `N` clicks of reveal-triggers (`aria-expanded="false"` controls and
+the summaries of closed `<details>`) in document order, re-extracting and
+merging any newly-mounted fields. Bounded by `N` and idempotent: each
+trigger is clicked at most once per call (tracked by a stable signature),
+so two invocations with the same `reveal=N` yield the same field set on
+the same page.
 """
 
 from __future__ import annotations
@@ -225,6 +233,32 @@ _EXTRACT_JS = r"""
 """
 
 
+_REVEAL_CLICK_NEXT_JS = r"""
+(clicked) => {
+  const seen = new Set(clicked || []);
+  const trim = (s) => (s || '').replace(/\s+/g, ' ').trim().slice(0, 64);
+
+  const cands = [];
+  document.querySelectorAll('[aria-expanded="false"]').forEach((el) => {
+    cands.push({
+      el: el,
+      sig: 'exp|' + (el.id || '') + '|' + (el.getAttribute('aria-controls') || '') + '|' + trim(el.textContent),
+    });
+  });
+  document.querySelectorAll('details:not([open]) > summary').forEach((el) => {
+    cands.push({ el: el, sig: 'sum|' + trim(el.textContent) });
+  });
+
+  for (const c of cands) {
+    if (seen.has(c.sig)) continue;
+    try { c.el.click(); } catch (_) { continue; }
+    return c.sig;
+  }
+  return null;
+}
+"""
+
+
 def _to_field(raw: dict) -> Field:
     return Field(
         selector=raw["selector"],
@@ -244,6 +278,7 @@ def extract_fields(
     headless: bool = True,
     *,
     session: str | None = None,
+    reveal: int = 0,
 ) -> list[Field]:
     """Load a page and return the interactive form fields found on it.
 
@@ -251,8 +286,18 @@ def extract_fields(
     editors, open shadow roots, and same-origin iframes. When `session`
     is a path to a Playwright storage_state file, its cookies and
     origins are restored so authenticated pages can be extracted.
+
+    `reveal` opts into an active discovery pass: after the passive walk,
+    up to `reveal` reveal-triggers (`aria-expanded="false"` controls and
+    closed `<details>` summaries) are clicked in document order and the
+    page is re-extracted, merging any new fields by selector. Each
+    trigger is clicked at most once per call, so the pass is bounded and
+    idempotent.
     """
     from playwright.sync_api import sync_playwright
+
+    if reveal < 0:
+        raise ValueError("reveal must be >= 0")
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=headless)
@@ -262,6 +307,19 @@ def extract_fields(
             try:
                 page.goto(url, wait_until="networkidle", timeout=timeout_ms)
                 raw_fields = page.evaluate(_EXTRACT_JS)
+                if reveal > 0:
+                    clicked: list[str] = []
+                    for _ in range(reveal):
+                        sig = page.evaluate(_REVEAL_CLICK_NEXT_JS, clicked)
+                        if not sig:
+                            break
+                        clicked.append(sig)
+                        page.wait_for_timeout(200)
+                        seen = {f["selector"] for f in raw_fields}
+                        for f in page.evaluate(_EXTRACT_JS):
+                            if f["selector"] not in seen:
+                                raw_fields.append(f)
+                                seen.add(f["selector"])
             finally:
                 context.close()
         finally:
