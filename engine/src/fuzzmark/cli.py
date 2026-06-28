@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 
+from .baselines import apply_approval, plan_approval
 from .capture import capture_page
 from .compare import DEFAULT_THRESHOLD, compare_images
 from .driver import load_test, run_flow
@@ -84,6 +85,24 @@ def _cmd_report(args: argparse.Namespace) -> None:
     )
     json.dump(report.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
+
+
+def _cmd_approve(args: argparse.Namespace) -> None:
+    data = json.loads(open(args.result, encoding="utf-8").read())
+    captures = _split_csv(args.captures)
+    plan = plan_approval(data, args.baselines, capture_names=captures)
+    result = apply_approval(plan, dry_run=args.dry_run)
+    json.dump(result.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
+    sys.stdout.write("\n")
+    if not result.written and not args.dry_run:
+        sys.exit(1)
+
+
+def _split_csv(raw: str | None) -> list[str] | None:
+    if raw is None:
+        return None
+    items = [item.strip() for item in raw.split(",") if item.strip()]
+    return items or None
 
 
 def _cmd_scan(args: argparse.Namespace) -> None:
@@ -172,6 +191,28 @@ def main(argv: list[str] | None = None) -> None:
         help=f"SSIM threshold for a pass verdict (default {DEFAULT_THRESHOLD})",
     )
     report_p.set_defaults(func=_cmd_report)
+
+    approve = sub.add_parser(
+        "approve",
+        help="Promote selected captures from a run result into approved baselines",
+    )
+    approve.add_argument("result", help="Path to a result JSON produced by `fuzzmark run`")
+    approve.add_argument(
+        "--baselines",
+        required=True,
+        help="Directory to write approved baseline PNGs into (created if missing)",
+    )
+    approve.add_argument(
+        "--captures",
+        default=None,
+        help="Comma-separated capture names to approve; default approves every capture in the run",
+    )
+    approve.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Plan the approval and print it without writing any files",
+    )
+    approve.set_defaults(func=_cmd_approve)
 
     scan = sub.add_parser(
         "scan",
