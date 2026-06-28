@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/client.dart';
 import 'scan_screen.dart';
+import 'test_builder_screen.dart';
 
 class ProjectScreen extends StatefulWidget {
   const ProjectScreen({
@@ -35,6 +36,19 @@ class _ProjectScreenState extends State<ProjectScreen> {
     );
   }
 
+  Future<void> _openTestBuilder() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => TestBuilderScreen(
+          api: widget.api,
+          project: _project,
+          onClose: () => Navigator.of(context).pop(),
+          onProjectUpdated: (p) => setState(() => _project = p),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final mono = TextStyle(
@@ -43,6 +57,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
       color: Theme.of(context).colorScheme.onSurface,
     );
     final scan = _project.scan;
+    final tests = _project.tests;
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -70,22 +85,55 @@ class _ProjectScreenState extends State<ProjectScreen> {
                   mono: mono,
                 ),
                 const SizedBox(height: 24),
-                Row(
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
                   children: [
                     FilledButton.icon(
                       onPressed: _openScan,
                       icon: const Icon(Icons.travel_explore),
                       label: Text(scan == null ? 'Run scan' : 'Re-scan'),
                     ),
+                    FilledButton.tonalIcon(
+                      onPressed: scan == null ? null : _openTestBuilder,
+                      icon: const Icon(Icons.add),
+                      label: const Text('New test'),
+                    ),
                   ],
                 ),
+                if (scan == null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Run a scan first to enable the test builder.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                ],
                 const SizedBox(height: 24),
                 Text(
-                  'Test builder, run, and review will land in the next Phase 5 commits.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
+                  'Tests',
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
+                const SizedBox(height: 8),
+                if (tests.isEmpty)
+                  Text(
+                    'No tests yet. Use "New test" to build one against a scanned page.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  )
+                else
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: tests
+                        .map((t) => ListTile(
+                              dense: true,
+                              leading: const Icon(Icons.description_outlined),
+                              title: Text(t, style: mono),
+                            ))
+                        .toList(growable: false),
+                  ),
               ],
             ),
           ),

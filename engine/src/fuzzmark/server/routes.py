@@ -12,15 +12,25 @@ import json
 from pathlib import Path
 from typing import Callable
 
+from ..driver import parse_test
+from ..extractor import Field, Option, Validation, extract_fields as _real_extract_fields
 from ..project import (
     Project,
     ProjectError,
     ProjectViewport,
+    add_test_path,
     init_project,
     load_project,
     set_scan_path,
 )
 from ..scanner import CrawlBounds, SiteMap, crawl as _real_crawl
+from ..suggestions import (
+    CustomTablesError,
+    Suggestion,
+    load_custom_tables,
+    merge_tables,
+    suggest_all,
+)
 
 
 API_VERSION = "0.1.0"
@@ -38,6 +48,9 @@ class RouteError(Exception):
 
 
 _crawl: Callable[..., SiteMap] = _real_crawl
+"""Injection seam: tests monkeypatch this to skip the browser."""
+
+_extract_fields: Callable[..., list] = _real_extract_fields
 """Injection seam: tests monkeypatch this to skip the browser."""
 
 
@@ -134,6 +147,212 @@ def _projects_scan_save(payload: dict) -> dict:
     return out
 
 
+def _projects_pages(payload: dict) -> dict:
+    """Return the pages of a project's saved scan, sans the link graph.
+
+    The Test builder uses this to populate its page picker without re-running
+    the crawl. Returns 400 when the project has no scan saved or the file
+    referenced by the project no longer exists.
+    """
+    path = _require_str(payload, "path")
+    project = _load_project(path)
+    scan_path = project.scan_resolved
+    if scan_path is None:
+        raise RouteError(400, "project has no saved scan; run a scan first")
+    if not scan_path.exists():
+        raise RouteError(400, f"scan file not found: {scan_path}")
+    try:
+        site_map = json.loads(scan_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RouteError(400, f"scan file is not valid JSON: {exc}") from exc
+    if not isinstance(site_map, dict):
+        raise RouteError(400, "scan file must be a JSON object")
+    pages = []
+    for raw in site_map.get("pages") or ():
+        if not isinstance(raw, dict):
+            continue
+        pages.append(
+            {
+                "url": raw.get("url"),
+                "depth": raw.get("depth"),
+                "title": raw.get("title"),
+                "error": raw.get("error"),
+            }
+        )
+    return {"base_url": site_map.get("base_url", project.base_url), "pages": pages}
+
+
+def _projects_extract(payload: dict) -> dict:
+    """Extract interactive form fields from a page URL.
+
+    Drives the browser-backed extractor under the project's saved session
+    when present, so authenticated pages work. The injection seam is
+    `_extract_fields`; tests stub it to skip Playwright entirely.
+    """
+    path = _require_str(payload, "path")
+    url = _require_str(payload, "url")
+    project = _load_project(path)
+    session = project.session_resolved
+    try:
+        fields = _extract_fields(
+            url,
+            session=str(session) if session is not None else None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise RouteError(500, f"extract failed: {exc}") from exc
+    return {"url": url, "fields": [_field_to_dict(f) for f in fields]}
+
+
+def _projects_suggest(payload: dict) -> dict:
+    """Generate suggestions for a list of fields against the project's tables.
+
+    Pure: no browser. Honors the project's custom-tables file when present.
+    The `fields` payload uses the same shape `_projects_extract` returns.
+    """
+    path = _require_str(payload, "path")
+    raw_fields = payload.get("fields")
+    if not isinstance(raw_fields, list):
+        raise RouteError(400, "'fields' must be a list")
+    project = _load_project(path)
+    fields = [_field_from_dict(item, idx) for idx, item in enumerate(raw_fields)]
+    tables_path = project.tables_resolved
+    if tables_path is not None:
+        try:
+            tables = merge_tables(load_custom_tables(tables_path))
+        except (CustomTablesError, OSError) as exc:
+            raise RouteError(400, f"custom tables load failed: {exc}") from exc
+    else:
+        tables = None
+    suggestions = suggest_all(fields, tables=tables)
+    return {
+        "suggestions": {
+            selector: [s.to_dict() for s in items]
+            for selector, items in suggestions.items()
+        }
+    }
+
+
+def _projects_tests_save(payload: dict) -> dict:
+    """Persist a Test JSON file under the project and link it into the manifest.
+
+    Validates the test body via `driver.parse_test` so what the engine writes
+    is guaranteed loadable. The file is placed at `<source_dir>/<filename>`
+    (default `tests/<sanitized-name>.json`). The project file's `tests` list
+    is updated to include the relative path.
+    """
+    path = _require_str(payload, "path")
+    test_raw = payload.get("test")
+    if not isinstance(test_raw, dict):
+        raise RouteError(400, "'test' must be a JSON object")
+    try:
+        validated = parse_test(test_raw)
+    except ValueError as exc:
+        raise RouteError(400, f"invalid test: {exc}") from exc
+
+    project_file = Path(path)
+    if not project_file.exists():
+        raise RouteError(400, f"project file not found: {project_file}")
+
+    filename = payload.get("filename")
+    if filename is None:
+        filename = f"tests/{_safe_name(validated.name)}.json"
+    if not isinstance(filename, str) or not filename.strip():
+        raise RouteError(400, "'filename' must be a non-empty string")
+    filename = filename.strip()
+    if filename.startswith("/") or ".." in Path(filename).parts:
+        raise RouteError(400, "'filename' must be a relative, non-escaping path")
+    overwrite = bool(payload.get("force", False))
+
+    target = project_file.parent / filename
+    if target.exists() and not overwrite:
+        raise RouteError(400, f"refusing to overwrite existing file: {target}")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(validated.to_dict(), indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    try:
+        project = add_test_path(project_file, filename)
+    except ProjectError as exc:
+        raise RouteError(400, str(exc)) from exc
+
+    out = _project_payload(path, project)
+    out["test_path"] = str(target.resolve())
+    return out
+
+
+def _field_to_dict(field: Field) -> dict:
+    return field.to_dict()
+
+
+def _field_from_dict(raw: object, idx: int) -> Field:
+    if not isinstance(raw, dict):
+        raise RouteError(400, f"fields[{idx}] must be a JSON object")
+    try:
+        validation_raw = raw.get("validation") or {}
+        if not isinstance(validation_raw, dict):
+            raise RouteError(400, f"fields[{idx}].validation must be a JSON object")
+        validation = Validation(
+            required=bool(validation_raw.get("required", False)),
+            maxlength=_opt_int(validation_raw.get("maxlength")),
+            minlength=_opt_int(validation_raw.get("minlength")),
+            min=_opt_str(validation_raw.get("min")),
+            max=_opt_str(validation_raw.get("max")),
+            step=_opt_str(validation_raw.get("step")),
+            pattern=_opt_str(validation_raw.get("pattern")),
+            accept=_opt_str(validation_raw.get("accept")),
+        )
+        options_raw = raw.get("options") or []
+        if not isinstance(options_raw, list):
+            raise RouteError(400, f"fields[{idx}].options must be a list")
+        options = [
+            Option(value=str(o.get("value", "")), label=str(o.get("label", "")))
+            for o in options_raw
+            if isinstance(o, dict)
+        ]
+        return Field(
+            selector=_require_field(raw, "selector", idx),
+            kind=_require_field(raw, "kind", idx),
+            type=_opt_str(raw.get("type")),
+            name=_opt_str(raw.get("name")),
+            id=_opt_str(raw.get("id")),
+            label=_opt_str(raw.get("label")),
+            validation=validation,
+            options=options,
+        )
+    except (TypeError, ValueError) as exc:
+        raise RouteError(400, f"fields[{idx}]: {exc}") from exc
+
+
+def _require_field(raw: dict, key: str, idx: int) -> str:
+    value = raw.get(key)
+    if not isinstance(value, str) or not value:
+        raise RouteError(400, f"fields[{idx}].{key} must be a non-empty string")
+    return value
+
+
+def _opt_int(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("bool is not a valid integer")
+    return int(value)
+
+
+def _opt_str(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("expected a string")
+    return value
+
+
+def _safe_name(name: str) -> str:
+    cleaned = "".join(c if c.isalnum() or c in "-_." else "-" for c in name).strip("-")
+    return cleaned or "test"
+
+
 def _parse_bounds(payload: dict) -> CrawlBounds:
     defaults = CrawlBounds()
     try:
@@ -209,6 +428,10 @@ ROUTES: dict[tuple[str, str], Route] = {
     ("POST", "/api/projects/init"): _projects_init,
     ("POST", "/api/projects/scan"): _projects_scan,
     ("POST", "/api/projects/scan/save"): _projects_scan_save,
+    ("POST", "/api/projects/pages"): _projects_pages,
+    ("POST", "/api/projects/extract"): _projects_extract,
+    ("POST", "/api/projects/suggest"): _projects_suggest,
+    ("POST", "/api/projects/tests/save"): _projects_tests_save,
 }
 
 

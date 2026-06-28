@@ -31,6 +31,12 @@ class FuzzmarkProject {
     return v is String ? v : null;
   }
 
+  List<String> get tests {
+    final v = raw['tests'];
+    if (v is! List) return const [];
+    return v.whereType<String>().toList(growable: false);
+  }
+
   factory FuzzmarkProject.fromJson(Map<String, dynamic> json) =>
       FuzzmarkProject(
         path: json['path'] as String,
@@ -129,6 +135,129 @@ class ScanResult {
   }
 }
 
+class FieldValidation {
+  FieldValidation({
+    this.required = false,
+    this.maxlength,
+    this.minlength,
+    this.min,
+    this.max,
+    this.step,
+    this.pattern,
+    this.accept,
+  });
+
+  final bool required;
+  final int? maxlength;
+  final int? minlength;
+  final String? min;
+  final String? max;
+  final String? step;
+  final String? pattern;
+  final String? accept;
+
+  factory FieldValidation.fromJson(Map<String, dynamic> json) => FieldValidation(
+        required: json['required'] == true,
+        maxlength: (json['maxlength'] as num?)?.toInt(),
+        minlength: (json['minlength'] as num?)?.toInt(),
+        min: json['min'] as String?,
+        max: json['max'] as String?,
+        step: json['step'] as String?,
+        pattern: json['pattern'] as String?,
+        accept: json['accept'] as String?,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'required': required,
+        'maxlength': maxlength,
+        'minlength': minlength,
+        'min': min,
+        'max': max,
+        'step': step,
+        'pattern': pattern,
+        'accept': accept,
+      };
+}
+
+class FieldOption {
+  FieldOption({required this.value, required this.label});
+
+  final String value;
+  final String label;
+
+  factory FieldOption.fromJson(Map<String, dynamic> json) => FieldOption(
+        value: json['value'] as String? ?? '',
+        label: json['label'] as String? ?? '',
+      );
+
+  Map<String, dynamic> toJson() => {'value': value, 'label': label};
+}
+
+class ExtractedField {
+  ExtractedField({
+    required this.selector,
+    required this.kind,
+    required this.type,
+    required this.name,
+    required this.id,
+    required this.label,
+    required this.validation,
+    required this.options,
+  });
+
+  final String selector;
+  final String kind;
+  final String? type;
+  final String? name;
+  final String? id;
+  final String? label;
+  final FieldValidation validation;
+  final List<FieldOption> options;
+
+  factory ExtractedField.fromJson(Map<String, dynamic> json) => ExtractedField(
+        selector: json['selector'] as String,
+        kind: json['kind'] as String,
+        type: json['type'] as String?,
+        name: json['name'] as String?,
+        id: json['id'] as String?,
+        label: json['label'] as String?,
+        validation:
+            FieldValidation.fromJson(json['validation'] as Map<String, dynamic>? ?? {}),
+        options: (json['options'] as List? ?? [])
+            .map((o) => FieldOption.fromJson(o as Map<String, dynamic>))
+            .toList(),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'selector': selector,
+        'kind': kind,
+        'type': type,
+        'name': name,
+        'id': id,
+        'label': label,
+        'validation': validation.toJson(),
+        'options': options.map((o) => o.toJson()).toList(),
+      };
+}
+
+class FieldSuggestion {
+  FieldSuggestion({
+    required this.category,
+    required this.value,
+    required this.label,
+  });
+
+  final String category;
+  final String value;
+  final String label;
+
+  factory FieldSuggestion.fromJson(Map<String, dynamic> json) => FieldSuggestion(
+        category: json['category'] as String,
+        value: json['value'] as String? ?? '',
+        label: json['label'] as String? ?? '',
+      );
+}
+
 class FuzzmarkApi {
   FuzzmarkApi({Uri? baseUri, http.Client? client})
       : baseUri = baseUri ?? Uri.parse('http://127.0.0.1:8765'),
@@ -170,6 +299,58 @@ class FuzzmarkApi {
       'path': projectPath,
       'site_map': siteMap,
       'filename': ?filename,
+    });
+    return FuzzmarkProject.fromJson(res);
+  }
+
+  Future<List<ScannedPage>> listScannedPages(String projectPath) async {
+    final res = await _post('/api/projects/pages', {'path': projectPath});
+    return (res['pages'] as List? ?? [])
+        .map((p) => ScannedPage.fromJson(p as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<ExtractedField>> extractFields({
+    required String projectPath,
+    required String url,
+  }) async {
+    final res = await _post('/api/projects/extract', {
+      'path': projectPath,
+      'url': url,
+    });
+    return (res['fields'] as List? ?? [])
+        .map((f) => ExtractedField.fromJson(f as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<Map<String, List<FieldSuggestion>>> suggestFields({
+    required String projectPath,
+    required List<ExtractedField> fields,
+  }) async {
+    final res = await _post('/api/projects/suggest', {
+      'path': projectPath,
+      'fields': fields.map((f) => f.toJson()).toList(),
+    });
+    final raw = res['suggestions'] as Map<String, dynamic>? ?? {};
+    return raw.map((selector, items) => MapEntry(
+          selector,
+          (items as List)
+              .map((s) => FieldSuggestion.fromJson(s as Map<String, dynamic>))
+              .toList(),
+        ));
+  }
+
+  Future<FuzzmarkProject> saveTest({
+    required String projectPath,
+    required Map<String, dynamic> test,
+    String? filename,
+    bool force = false,
+  }) async {
+    final res = await _post('/api/projects/tests/save', {
+      'path': projectPath,
+      'test': test,
+      'filename': ?filename,
+      if (force) 'force': true,
     });
     return FuzzmarkProject.fromJson(res);
   }

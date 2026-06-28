@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from fuzzmark.extractor import Field, Option, Validation
 from fuzzmark.scanner import CrawlBounds, Page, SiteMap, SkippedUrl
 from fuzzmark.server import RouteError, dispatch, make_server
 from fuzzmark.server import routes as server_routes
@@ -268,6 +269,315 @@ class TestScanRoutes:
                 "POST",
                 "/api/projects/scan/save",
                 {"path": path, "site_map": {}, "filename": "nested/scan.json"},
+            )
+        assert excinfo.value.status == 400
+
+
+class TestPagesRoute:
+    def _project_with_scan(self, tmp_path: Path) -> str:
+        path = str(tmp_path / "project.json")
+        dispatch(
+            "POST",
+            "/api/projects/init",
+            {"path": path, "name": "demo", "base_url": "http://example.test/"},
+        )
+        site_map = {
+            "base_url": "http://example.test/",
+            "bounds": {},
+            "page_count": 2,
+            "skipped_count": 0,
+            "pages": [
+                {
+                    "url": "http://example.test/",
+                    "depth": 0,
+                    "parent_url": None,
+                    "title": "Home",
+                    "links": [],
+                    "error": None,
+                },
+                {
+                    "url": "http://example.test/about",
+                    "depth": 1,
+                    "parent_url": "http://example.test/",
+                    "title": "About",
+                    "links": [],
+                    "error": None,
+                },
+            ],
+            "skipped": [],
+        }
+        dispatch(
+            "POST",
+            "/api/projects/scan/save",
+            {"path": path, "site_map": site_map},
+        )
+        return path
+
+    def test_returns_pages_from_saved_scan(self, tmp_path: Path) -> None:
+        path = self._project_with_scan(tmp_path)
+        body = dispatch("POST", "/api/projects/pages", {"path": path})
+        assert body["base_url"] == "http://example.test/"
+        assert [p["url"] for p in body["pages"]] == [
+            "http://example.test/",
+            "http://example.test/about",
+        ]
+        assert body["pages"][0]["title"] == "Home"
+
+    def test_requires_saved_scan(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "project.json")
+        dispatch(
+            "POST",
+            "/api/projects/init",
+            {"path": path, "name": "demo", "base_url": "http://x/"},
+        )
+        with pytest.raises(RouteError) as excinfo:
+            dispatch("POST", "/api/projects/pages", {"path": path})
+        assert excinfo.value.status == 400
+        assert "scan" in excinfo.value.message
+
+
+class TestExtractRoute:
+    def _init_project(self, tmp_path: Path) -> str:
+        path = str(tmp_path / "project.json")
+        dispatch(
+            "POST",
+            "/api/projects/init",
+            {"path": path, "name": "demo", "base_url": "http://x/"},
+        )
+        return path
+
+    def test_extract_uses_session_and_returns_field_dicts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = self._init_project(tmp_path)
+        captured: dict = {}
+
+        def fake_extract(url, *, session=None):
+            captured["url"] = url
+            captured["session"] = session
+            return [
+                Field(
+                    selector="#email",
+                    kind="input",
+                    type="email",
+                    name="email",
+                    id="email",
+                    label="Email",
+                    validation=Validation(required=True, maxlength=64),
+                    options=[],
+                )
+            ]
+
+        monkeypatch.setattr(server_routes, "_extract_fields", fake_extract)
+        body = dispatch(
+            "POST",
+            "/api/projects/extract",
+            {"path": path, "url": "http://x/login"},
+        )
+        assert captured["url"] == "http://x/login"
+        assert captured["session"] is None
+        assert body["url"] == "http://x/login"
+        assert len(body["fields"]) == 1
+        f = body["fields"][0]
+        assert f["selector"] == "#email"
+        assert f["validation"]["required"] is True
+        assert f["validation"]["maxlength"] == 64
+
+
+class TestSuggestRoute:
+    def _init_project(self, tmp_path: Path) -> str:
+        path = str(tmp_path / "project.json")
+        dispatch(
+            "POST",
+            "/api/projects/init",
+            {"path": path, "name": "demo", "base_url": "http://x/"},
+        )
+        return path
+
+    def test_suggests_for_extracted_fields(self, tmp_path: Path) -> None:
+        path = self._init_project(tmp_path)
+        fields = [
+            Field(
+                selector="#email",
+                kind="input",
+                type="email",
+                name="email",
+                id="email",
+                label="Email",
+                validation=Validation(required=True),
+            ).to_dict(),
+            Field(
+                selector="#country",
+                kind="select",
+                type=None,
+                name="country",
+                id="country",
+                label="Country",
+                validation=Validation(),
+                options=[Option(value="us", label="USA"), Option(value="ca", label="Canada")],
+            ).to_dict(),
+        ]
+        body = dispatch(
+            "POST",
+            "/api/projects/suggest",
+            {"path": path, "fields": fields},
+        )
+        sug = body["suggestions"]
+        assert "#email" in sug and "#country" in sug
+        email_categories = {s["category"] for s in sug["#email"]}
+        assert "empty" in email_categories
+        country_values = [s["value"] for s in sug["#country"]]
+        assert "us" in country_values
+        assert "ca" in country_values
+
+    def test_honors_project_custom_tables(self, tmp_path: Path) -> None:
+        path = str(tmp_path / "project.json")
+        tables_path = tmp_path / "tables.json"
+        tables_path.write_text(
+            json.dumps(
+                {
+                    "tables": {
+                        "email": {
+                            "extend": [
+                                {
+                                    "category": "format-valid",
+                                    "value": "ceo@acme.com",
+                                    "label": "CEO",
+                                }
+                            ]
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        dispatch(
+            "POST",
+            "/api/projects/init",
+            {"path": path, "name": "d", "base_url": "http://x/"},
+        )
+        Path(path).write_text(
+            json.dumps(
+                {"name": "d", "base_url": "http://x/", "tables": "tables.json"}
+            ),
+            encoding="utf-8",
+        )
+        body = dispatch(
+            "POST",
+            "/api/projects/suggest",
+            {
+                "path": path,
+                "fields": [
+                    Field(
+                        selector="#email",
+                        kind="input",
+                        type="email",
+                        name=None,
+                        id=None,
+                        label=None,
+                        validation=Validation(),
+                    ).to_dict()
+                ],
+            },
+        )
+        values = [s["value"] for s in body["suggestions"]["#email"]]
+        assert "ceo@acme.com" in values
+
+    def test_rejects_non_list_fields(self, tmp_path: Path) -> None:
+        path = self._init_project(tmp_path)
+        with pytest.raises(RouteError) as excinfo:
+            dispatch(
+                "POST",
+                "/api/projects/suggest",
+                {"path": path, "fields": "nope"},
+            )
+        assert excinfo.value.status == 400
+
+
+class TestTestsSaveRoute:
+    def _init_project(self, tmp_path: Path) -> str:
+        path = str(tmp_path / "project.json")
+        dispatch(
+            "POST",
+            "/api/projects/init",
+            {"path": path, "name": "demo", "base_url": "http://x/"},
+        )
+        return path
+
+    def _valid_test(self) -> dict:
+        return {
+            "name": "smoke",
+            "flow": [
+                {"kind": "visit", "url": "http://x/"},
+                {"kind": "fill", "selector": "#email", "value": "a@b.co"},
+                {"kind": "capture", "name": "after-fill"},
+            ],
+        }
+
+    def test_writes_file_and_links_to_project(self, tmp_path: Path) -> None:
+        path = self._init_project(tmp_path)
+        body = dispatch(
+            "POST",
+            "/api/projects/tests/save",
+            {"path": path, "test": self._valid_test()},
+        )
+        assert body["tests"] == ["tests/smoke.json"]
+        written = tmp_path / "tests" / "smoke.json"
+        assert written.exists()
+        on_disk = json.loads(written.read_text(encoding="utf-8"))
+        assert on_disk["name"] == "smoke"
+        assert on_disk["flow"][0]["kind"] == "visit"
+
+    def test_custom_filename(self, tmp_path: Path) -> None:
+        path = self._init_project(tmp_path)
+        body = dispatch(
+            "POST",
+            "/api/projects/tests/save",
+            {
+                "path": path,
+                "test": self._valid_test(),
+                "filename": "flows/login.json",
+            },
+        )
+        assert body["tests"] == ["flows/login.json"]
+        assert (tmp_path / "flows" / "login.json").exists()
+
+    def test_refuses_overwrite_without_force(self, tmp_path: Path) -> None:
+        path = self._init_project(tmp_path)
+        dispatch(
+            "POST",
+            "/api/projects/tests/save",
+            {"path": path, "test": self._valid_test()},
+        )
+        with pytest.raises(RouteError) as excinfo:
+            dispatch(
+                "POST",
+                "/api/projects/tests/save",
+                {"path": path, "test": self._valid_test()},
+            )
+        assert excinfo.value.status == 400
+
+    def test_rejects_path_escape(self, tmp_path: Path) -> None:
+        path = self._init_project(tmp_path)
+        with pytest.raises(RouteError) as excinfo:
+            dispatch(
+                "POST",
+                "/api/projects/tests/save",
+                {
+                    "path": path,
+                    "test": self._valid_test(),
+                    "filename": "../escape.json",
+                },
+            )
+        assert excinfo.value.status == 400
+
+    def test_rejects_invalid_test_body(self, tmp_path: Path) -> None:
+        path = self._init_project(tmp_path)
+        with pytest.raises(RouteError) as excinfo:
+            dispatch(
+                "POST",
+                "/api/projects/tests/save",
+                {"path": path, "test": {"name": "x", "flow": []}},
             )
         assert excinfo.value.status == 400
 
