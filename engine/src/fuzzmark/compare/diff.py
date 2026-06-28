@@ -1,4 +1,9 @@
-"""SSIM-based image comparison: catch, not classify (MVP scope per spec §10.2)."""
+"""SSIM-based image comparison: catch, not classify (MVP scope per spec §10.2).
+
+SSIM runs on the BGR image with channel_axis=-1 so a color change to an
+otherwise-identical region (e.g. a button background swap) registers as a real
+difference. Grayscale SSIM would discard chroma and miss equiluminant swaps.
+"""
 
 from __future__ import annotations
 
@@ -61,10 +66,11 @@ def compare_images(
     baseline = _load_bgr(baseline_path)
     candidate = _normalize_dims(baseline, _load_bgr(candidate_path))
 
-    gray_baseline = cv2.cvtColor(baseline, cv2.COLOR_BGR2GRAY)
-    gray_candidate = cv2.cvtColor(candidate, cv2.COLOR_BGR2GRAY)
-
-    score, ssim_map = structural_similarity(gray_baseline, gray_candidate, full=True)
+    score, ssim_map = structural_similarity(
+        baseline, candidate, channel_axis=-1, full=True
+    )
+    if ssim_map.ndim == 3:
+        ssim_map = ssim_map.mean(axis=-1)
 
     written_diff: str | None = None
     if diff_path is not None:
