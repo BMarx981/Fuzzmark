@@ -32,3 +32,10 @@ def fixture_form_url() -> str:
     path = Path(__file__).resolve().parents[1] / "fixtures" / "form.html"
     assert path.exists(), f"fixture missing: {path}"
     return path.as_uri()
+
+
+@pytest.fixture(scope="session")
+def fixture_site_url() -> str:
+    path = Path(__file__).resolve().parents[1] / "fixtures" / "site" / "index.html"
+    assert path.exists(), f"fixture missing: {path}"
+    return path.as_uri()

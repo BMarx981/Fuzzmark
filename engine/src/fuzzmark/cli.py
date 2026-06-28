@@ -11,6 +11,7 @@ from .compare import DEFAULT_THRESHOLD, compare_images
 from .driver import load_test, run_flow
 from .extractor import extract_fields
 from .report import render_report
+from .scanner import CrawlBounds, crawl
 from .suggestions import suggest
 
 
@@ -82,6 +83,19 @@ def _cmd_report(args: argparse.Namespace) -> None:
         threshold=args.threshold,
     )
     json.dump(report.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
+    sys.stdout.write("\n")
+
+
+def _cmd_scan(args: argparse.Namespace) -> None:
+    bounds = CrawlBounds(
+        max_depth=args.max_depth,
+        max_pages=args.max_pages,
+        same_origin=not args.allow_cross_origin,
+        respect_robots=not args.ignore_robots,
+        rate_limit_seconds=args.rate_limit,
+    )
+    site = crawl(args.url, bounds, headless=not args.headed)
+    json.dump(site.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
 
 
@@ -158,6 +172,39 @@ def main(argv: list[str] | None = None) -> None:
         help=f"SSIM threshold for a pass verdict (default {DEFAULT_THRESHOLD})",
     )
     report_p.set_defaults(func=_cmd_report)
+
+    scan = sub.add_parser(
+        "scan",
+        help="Crawl a base URL within bounds and emit a site map as JSON",
+    )
+    scan.add_argument("url")
+    scan.add_argument(
+        "--max-depth", type=int, default=CrawlBounds.max_depth, help="Max link-hops from the start URL"
+    )
+    scan.add_argument(
+        "--max-pages",
+        type=int,
+        default=CrawlBounds.max_pages,
+        help="Soft cap on pages visited",
+    )
+    scan.add_argument(
+        "--allow-cross-origin",
+        action="store_true",
+        help="Follow links to other origins (default: same-origin only)",
+    )
+    scan.add_argument(
+        "--ignore-robots",
+        action="store_true",
+        help="Skip robots.txt (intended for local dev)",
+    )
+    scan.add_argument(
+        "--rate-limit",
+        type=float,
+        default=0.0,
+        help="Seconds to sleep between page loads",
+    )
+    scan.add_argument("--headed", action="store_true", help="Run the browser headed")
+    scan.set_defaults(func=_cmd_scan)
 
     compare = sub.add_parser(
         "compare",
