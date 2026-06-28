@@ -24,12 +24,13 @@ This document is what that loader accepts, in human-readable form.
 }
 ```
 
-A test is a JSON object with exactly two top-level keys:
+A test is a JSON object. The required top-level keys are `name` and `flow`; the others are optional.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `name` | string | yes | Non-empty after trimming. Used in run results and reports. |
 | `flow` | array | yes | Non-empty list of step objects. |
+| `session` | string | no | Path to a Playwright `storage_state` JSON (produced by `fuzzmark session …`). Replayed into the browser context so the flow runs authenticated. Overrides the CLI `--session` flag when set. |
 
 ## Flow rules
 

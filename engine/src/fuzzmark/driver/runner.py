@@ -40,6 +40,7 @@ def run_flow(
     wait_until: str = "networkidle",
     timeout_ms: int = 15000,
     headless: bool = True,
+    session: str | None = None,
 ) -> RunResult:
     """Drive `test` against a fresh browser and return a `RunResult`.
 
@@ -47,6 +48,10 @@ def run_flow(
     own context; the `viewport` argument is ignored in that case. When the test
     declares none, the flow runs once at the supplied `viewport` and capture
     artifacts are untagged.
+
+    When `test.session` is set it overrides `session`; otherwise the kwarg is
+    used. The resolved session path is replayed into each per-viewport context
+    so authenticated flows reuse the captured cookies and origins.
     """
     from playwright.sync_api import sync_playwright
 
@@ -57,6 +62,7 @@ def run_flow(
         Viewport(name="", width=viewport[0], height=viewport[1]),
     )
     tag_with_viewport = bool(test.viewports)
+    resolved_session = test.session or session
 
     console_errors: list[ConsoleMessage] = []
     page_errors: list[str] = []
@@ -81,6 +87,7 @@ def run_flow(
                     tag_with_viewport=tag_with_viewport,
                     wait_until=wait_until,
                     timeout_ms=timeout_ms,
+                    session=resolved_session,
                 )
         finally:
             browser.close()
@@ -107,8 +114,12 @@ def _run_one_viewport(
     tag_with_viewport: bool,
     wait_until: str,
     timeout_ms: int,
+    session: str | None,
 ) -> None:
-    context = browser.new_context(viewport={"width": vp.width, "height": vp.height})
+    context = browser.new_context(
+        viewport={"width": vp.width, "height": vp.height},
+        storage_state=session,
+    )
     page = context.new_page()
 
     def _on_console(msg) -> None:

@@ -13,18 +13,22 @@ from .driver import load_test, run_flow
 from .extractor import extract_fields, extract_site
 from .report import render_report
 from .scanner import CrawlBounds, crawl
+from .sessions import SessionError, capture_session, validate_session
 from .suggestions import load_custom_tables, merge_tables, suggest, suggest_site
 
 
 def _cmd_extract(args: argparse.Namespace) -> None:
+    session = _resolve_session_arg(args)
     if args.scan:
         site_map = json.loads(open(args.scan, encoding="utf-8").read())
-        extractor = lambda url: extract_fields(url, headless=not args.headed)
+        extractor = lambda url: extract_fields(
+            url, headless=not args.headed, session=session
+        )
         payload = extract_site(site_map, extractor=extractor, include=args.include or None)
     else:
         if not args.url:
             raise SystemExit("extract: pass a URL or --scan <site-map.json>")
-        fields = extract_fields(args.url, headless=not args.headed)
+        fields = extract_fields(args.url, headless=not args.headed, session=session)
         payload = {
             "url": args.url,
             "field_count": len(fields),
@@ -36,15 +40,18 @@ def _cmd_extract(args: argparse.Namespace) -> None:
 
 def _cmd_suggest(args: argparse.Namespace) -> None:
     tables = merge_tables(load_custom_tables(args.tables)) if args.tables else None
+    session = _resolve_session_arg(args)
     if args.scan:
         site_map = json.loads(open(args.scan, encoding="utf-8").read())
-        extractor = lambda url: extract_fields(url, headless=not args.headed)
+        extractor = lambda url: extract_fields(
+            url, headless=not args.headed, session=session
+        )
         site = extract_site(site_map, extractor=extractor, include=args.include or None)
         payload = suggest_site(site, tables=tables)
     else:
         if not args.url:
             raise SystemExit("suggest: pass a URL or --scan <site-map.json>")
-        fields = extract_fields(args.url, headless=not args.headed)
+        fields = extract_fields(args.url, headless=not args.headed, session=session)
         items = []
         for field in fields:
             suggestions = suggest(field, tables=tables)
@@ -68,12 +75,14 @@ def _cmd_suggest(args: argparse.Namespace) -> None:
 
 
 def _cmd_capture(args: argparse.Namespace) -> None:
+    session = _resolve_session_arg(args)
     result = capture_page(
         args.url,
         args.output,
         viewport=(args.width, args.height),
         full_page=not args.viewport_only,
         headless=not args.headed,
+        session=session,
     )
     json.dump(result.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
@@ -81,11 +90,37 @@ def _cmd_capture(args: argparse.Namespace) -> None:
 
 def _cmd_run(args: argparse.Namespace) -> None:
     test = load_test(args.test)
+    session = _resolve_session_arg(args)
     result = run_flow(
         test,
         args.out,
         viewport=(args.width, args.height),
         headless=not args.headed,
+        session=session,
+    )
+    json.dump(result.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
+    sys.stdout.write("\n")
+
+
+def _resolve_session_arg(args: argparse.Namespace) -> str | None:
+    """Validate `--session` if provided; return the resolved path or None."""
+    path = getattr(args, "session", None)
+    if not path:
+        return None
+    try:
+        validate_session(path)
+    except SessionError as exc:
+        raise SystemExit(f"--session: {exc}") from exc
+    return path
+
+
+def _cmd_session(args: argparse.Namespace) -> None:
+    result = capture_session(
+        args.url,
+        args.out,
+        wait_for_url=args.wait_for_url,
+        timeout_s=args.timeout,
+        headless=args.headless,
     )
     json.dump(result.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
@@ -146,7 +181,8 @@ def _cmd_scan(args: argparse.Namespace) -> None:
         respect_robots=not args.ignore_robots,
         rate_limit_seconds=args.rate_limit,
     )
-    site = crawl(args.url, bounds, headless=not args.headed)
+    session = _resolve_session_arg(args)
+    site = crawl(args.url, bounds, headless=not args.headed, session=session)
     json.dump(site.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
 
@@ -187,6 +223,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Restrict --scan extraction to this URL; repeatable",
     )
     extract.add_argument("--headed", action="store_true", help="Run the browser headed")
+    extract.add_argument(
+        "--session",
+        default=None,
+        metavar="PATH",
+        help="Replay a Playwright storage_state JSON for authenticated extraction",
+    )
     extract.set_defaults(func=_cmd_extract)
 
     suggest_p = sub.add_parser(
@@ -213,6 +255,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Path to a JSON file of user-authored suggestion tables to merge with the built-ins",
     )
     suggest_p.add_argument("--headed", action="store_true", help="Run the browser headed")
+    suggest_p.add_argument(
+        "--session",
+        default=None,
+        metavar="PATH",
+        help="Replay a Playwright storage_state JSON for authenticated extraction",
+    )
     suggest_p.set_defaults(func=_cmd_suggest)
 
     capture = sub.add_parser(
@@ -228,6 +276,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Capture only the visible viewport instead of the full page",
     )
     capture.add_argument("--headed", action="store_true", help="Run the browser headed")
+    capture.add_argument(
+        "--session",
+        default=None,
+        metavar="PATH",
+        help="Replay a Playwright storage_state JSON for authenticated capture",
+    )
     capture.set_defaults(func=_cmd_capture)
 
     run_p = sub.add_parser(
@@ -238,6 +292,12 @@ def main(argv: list[str] | None = None) -> None:
     run_p.add_argument("--width", type=int, default=1280, help="Viewport width (px)")
     run_p.add_argument("--height", type=int, default=800, help="Viewport height (px)")
     run_p.add_argument("--headed", action="store_true", help="Run the browser headed")
+    run_p.add_argument(
+        "--session",
+        default=None,
+        metavar="PATH",
+        help="Replay a Playwright storage_state JSON for an authenticated run (Test JSON 'session' wins when set)",
+    )
     run_p.set_defaults(func=_cmd_run)
 
     report_p = sub.add_parser(
@@ -321,7 +381,42 @@ def main(argv: list[str] | None = None) -> None:
         help="Seconds to sleep between page loads",
     )
     scan.add_argument("--headed", action="store_true", help="Run the browser headed")
+    scan.add_argument(
+        "--session",
+        default=None,
+        metavar="PATH",
+        help="Replay a Playwright storage_state JSON for an authenticated crawl",
+    )
     scan.set_defaults(func=_cmd_scan)
+
+    session_p = sub.add_parser(
+        "session",
+        help="Open a headed browser at a login URL and save the resulting session",
+    )
+    session_p.add_argument("url", help="Login page URL to open")
+    session_p.add_argument(
+        "--out",
+        required=True,
+        help="Path to write the Playwright storage_state JSON to",
+    )
+    session_p.add_argument(
+        "--wait-for-url",
+        default=None,
+        metavar="REGEX",
+        help="Save once the page URL matches REGEX; default saves on first navigation away from the login URL",
+    )
+    session_p.add_argument(
+        "--timeout",
+        type=float,
+        default=300.0,
+        help="Max seconds to wait for the trigger navigation",
+    )
+    session_p.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run headless (use only when --wait-for-url is automatable; default is headed for interactive login)",
+    )
+    session_p.set_defaults(func=_cmd_session)
 
     compare = sub.add_parser(
         "compare",

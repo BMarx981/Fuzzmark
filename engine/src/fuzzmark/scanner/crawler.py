@@ -142,13 +142,15 @@ _LINK_JS = r"""
 """
 
 
-def _browser_fetcher(timeout_ms: int, headless: bool) -> FetchPage:
+def _browser_fetcher(
+    timeout_ms: int, headless: bool, session: str | None = None
+) -> FetchPage:
     """Build a Chromium-backed fetcher in its own Playwright context."""
     from playwright.sync_api import sync_playwright
 
     pw = sync_playwright().start()
     browser = pw.chromium.launch(headless=headless)
-    context = browser.new_context()
+    context = browser.new_context(storage_state=session)
 
     def fetch(url: str) -> FetchResult:
         page = context.new_page()
@@ -177,17 +179,21 @@ def crawl(
     timeout_ms: int = 15000,
     headless: bool = True,
     robots: RobotFileParser | None = None,
+    session: str | None = None,
 ) -> SiteMap:
     """Crawl `base_url` under `bounds` with a real Chromium browser.
 
     When `bounds.respect_robots` is on and no `robots` parser is supplied,
-    robots.txt is fetched and parsed before the crawl begins.
+    robots.txt is fetched and parsed before the crawl begins. When `session`
+    is a path to a Playwright storage_state file, the crawl runs authenticated.
     """
     bounds = bounds or CrawlBounds()
     if robots is None and bounds.respect_robots:
         robots = fetch_robots(base_url, bounds.user_agent)
 
-    fetcher = _browser_fetcher(timeout_ms=timeout_ms, headless=headless)
+    fetcher = _browser_fetcher(
+        timeout_ms=timeout_ms, headless=headless, session=session
+    )
     try:
         return bfs_crawl(base_url, bounds, fetcher, robots=robots)
     finally:

@@ -66,8 +66,17 @@ def parse_test(raw: dict) -> Test:
         raise ValueError("capture step names must be unique within a flow")
 
     viewports = _parse_viewports(raw.get("viewports"))
+    session = _parse_session(raw.get("session"))
 
-    return Test(name=name, flow=steps, viewports=viewports)
+    return Test(name=name, flow=steps, viewports=viewports, session=session)
+
+
+def _parse_session(raw: object) -> str | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError("'session' must be a non-empty string path when present")
+    return raw.strip()
 
 
 def _parse_viewports(raw: object) -> tuple[Viewport, ...]:

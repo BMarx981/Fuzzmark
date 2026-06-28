@@ -79,11 +79,14 @@ class Test:
     name: str
     flow: list[FlowStep]
     viewports: tuple[Viewport, ...] = ()
+    session: Optional[str] = None
 
     def to_dict(self) -> dict:
         out: dict = {"name": self.name, "flow": [s.to_dict() for s in self.flow]}
         if self.viewports:
             out["viewports"] = [v.to_dict() for v in self.viewports]
+        if self.session is not None:
+            out["session"] = self.session
         return out
 
 

@@ -19,6 +19,7 @@ def capture_page(
     wait_until: str = "networkidle",
     timeout_ms: int = 15000,
     headless: bool = True,
+    session: str | None = None,
 ) -> CaptureResult:
     """Load `url`, save a screenshot to `screenshot_path`, and collect error signals.
 
@@ -30,6 +31,8 @@ def capture_page(
         wait_until: Playwright load-state to wait for before screenshotting.
         timeout_ms: Hard cap on the navigation step.
         headless: Run the browser headless.
+        session: Optional path to a Playwright storage_state JSON; replays the
+            captured cookies/origins for authenticated capture.
 
     Returns:
         A populated `CaptureResult`.
@@ -45,7 +48,10 @@ def capture_page(
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=headless)
-        context = browser.new_context(viewport={"width": width, "height": height})
+        context = browser.new_context(
+            viewport={"width": width, "height": height},
+            storage_state=session,
+        )
         page = context.new_page()
 
         def _on_console(msg) -> None:

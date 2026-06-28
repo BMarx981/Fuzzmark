@@ -92,16 +92,30 @@ def _to_field(raw: dict) -> Field:
     )
 
 
-def extract_fields(url: str, timeout_ms: int = 15000, headless: bool = True) -> list[Field]:
-    """Load a page and return the interactive form fields found on it."""
+def extract_fields(
+    url: str,
+    timeout_ms: int = 15000,
+    headless: bool = True,
+    *,
+    session: str | None = None,
+) -> list[Field]:
+    """Load a page and return the interactive form fields found on it.
+
+    When `session` is a path to a Playwright storage_state file, its cookies
+    and origins are restored so authenticated pages can be extracted.
+    """
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=headless)
-        page = browser.new_page()
         try:
-            page.goto(url, wait_until="networkidle", timeout=timeout_ms)
-            raw_fields = page.evaluate(_EXTRACT_JS)
+            context = browser.new_context(storage_state=session) if session else browser.new_context()
+            page = context.new_page()
+            try:
+                page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+                raw_fields = page.evaluate(_EXTRACT_JS)
+            finally:
+                context.close()
         finally:
             browser.close()
 
