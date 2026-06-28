@@ -7,6 +7,7 @@ import json
 import sys
 
 from .capture import capture_page
+from .compare import DEFAULT_THRESHOLD, compare_images
 from .extractor import extract_fields
 from .suggestions import suggest
 
@@ -58,6 +59,18 @@ def _cmd_capture(args: argparse.Namespace) -> None:
     sys.stdout.write("\n")
 
 
+def _cmd_compare(args: argparse.Namespace) -> None:
+    result = compare_images(
+        args.baseline,
+        args.candidate,
+        threshold=args.threshold,
+        diff_path=args.diff_out,
+    )
+    json.dump(result.to_dict(), sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    sys.exit(0 if result.verdict == "pass" else 1)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="fuzzmark", description="Scan-first QA engine")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -88,6 +101,25 @@ def main(argv: list[str] | None = None) -> None:
     )
     capture.add_argument("--headed", action="store_true", help="Run the browser headed")
     capture.set_defaults(func=_cmd_capture)
+
+    compare = sub.add_parser(
+        "compare",
+        help="Compare a candidate screenshot against a baseline; exits 1 on change",
+    )
+    compare.add_argument("baseline")
+    compare.add_argument("candidate")
+    compare.add_argument(
+        "--threshold",
+        type=float,
+        default=DEFAULT_THRESHOLD,
+        help=f"SSIM threshold for a pass verdict (default {DEFAULT_THRESHOLD})",
+    )
+    compare.add_argument(
+        "--diff-out",
+        default=None,
+        help="Optional path to write a heatmap PNG visualizing the diff",
+    )
+    compare.set_defaults(func=_cmd_compare)
 
     args = parser.parse_args(argv)
     args.func(args)
