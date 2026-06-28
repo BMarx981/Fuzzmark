@@ -25,7 +25,7 @@ def test_passive_only_misses_hidden_fields(fixture_components_reveal_url: str) -
 def test_reveal_surfaces_disclosed_and_details_fields(
     fixture_components_reveal_url: str,
 ) -> None:
-    fields = extract_fields(fixture_components_reveal_url, reveal=8)
+    fields = extract_fields(fixture_components_reveal_url, reveal=16)
     # All fields should now be discovered. Order: passive-discovered first,
     # then new fields appended in the order their reveal-trigger fires.
     assert set(_names(fields)) == {
@@ -35,7 +35,27 @@ def test_reveal_surfaces_disclosed_and_details_fields(
         "address",
         "country",
         "referral",
+        "coupon",
+        "phone",
     }
+
+
+def test_reveal_surfaces_dialog_opener_fields(
+    fixture_components_reveal_url: str,
+) -> None:
+    # The coupon dialog has no aria-expanded; only aria-haspopup="dialog".
+    # With a tight reveal cap, aria-expanded + details triggers come first.
+    # A larger cap should still reach the dialog opener.
+    fields = extract_fields(fixture_components_reveal_url, reveal=16)
+    assert "coupon" in _names(fields)
+
+
+def test_reveal_surfaces_text_pattern_trigger(
+    fixture_components_reveal_url: str,
+) -> None:
+    # "Add another phone" is a text-pattern reveal — no aria attrs on it.
+    fields = extract_fields(fixture_components_reveal_url, reveal=16)
+    assert "phone" in _names(fields)
 
 
 def test_reveal_pass_is_idempotent(fixture_components_reveal_url: str) -> None:

@@ -9,12 +9,15 @@ without changes. Selectors emitted across shadow or iframe boundaries are
 joined with ` >>> ` so the driver can later resolve them per hop.
 
 Passing `reveal=N` runs an active discovery pass after the passive walk:
-up to `N` clicks of reveal-triggers (`aria-expanded="false"` controls and
-the summaries of closed `<details>`) in document order, re-extracting and
-merging any newly-mounted fields. Bounded by `N` and idempotent: each
-trigger is clicked at most once per call (tracked by a stable signature),
-so two invocations with the same `reveal=N` yield the same field set on
-the same page.
+up to `N` clicks of reveal-triggers in document order, re-extracting and
+merging any newly-mounted fields. Trigger predicates, in priority order:
+`aria-expanded="false"` controls, closed `<details>` summaries,
+`aria-haspopup` dialog/menu openers, and a narrow allowlist of
+reveal-verb buttons ("Add another", "Show more", "More options", …).
+Submit buttons are excluded. Bounded by `N` and idempotent: each trigger
+is clicked at most once per call (tracked by a stable signature), so two
+invocations with the same `reveal=N` yield the same field set on the
+same page.
 """
 
 from __future__ import annotations
@@ -238,15 +241,55 @@ _REVEAL_CLICK_NEXT_JS = r"""
   const seen = new Set(clicked || []);
   const trim = (s) => (s || '').replace(/\s+/g, ' ').trim().slice(0, 64);
 
+  // Conservative reveal-verb patterns. Anchored at start of the trimmed
+  // textContent so unrelated CTAs ("Add to cart", "Show details") don't
+  // match. Keep this list narrow on purpose — false positives here would
+  // fire arbitrary buttons during a scan.
+  const TEXT_REVEAL_RE = /^(add (another|more|new|item|field|row|step|line)|show (more|all|fields|optional)|more (options|fields|details)|see more|reveal more)\b/i;
+
+  const isSubmit = (el) => {
+    const t = (el.getAttribute('type') || '').toLowerCase();
+    if (el.tagName === 'BUTTON') return t === 'submit';
+    if (el.tagName === 'INPUT') return t === 'submit';
+    return false;
+  };
+
   const cands = [];
+
+  // 1. aria-expanded="false" controls — the highest-signal disclosure trigger.
   document.querySelectorAll('[aria-expanded="false"]').forEach((el) => {
     cands.push({
       el: el,
       sig: 'exp|' + (el.id || '') + '|' + (el.getAttribute('aria-controls') || '') + '|' + trim(el.textContent),
     });
   });
+
+  // 2. Closed <details>.
   document.querySelectorAll('details:not([open]) > summary').forEach((el) => {
     cands.push({ el: el, sig: 'sum|' + trim(el.textContent) });
+  });
+
+  // 3. Dialog openers — buttons advertising aria-haspopup, minus any
+  // already matched by the aria-expanded pass above.
+  document.querySelectorAll('[aria-haspopup]').forEach((el) => {
+    const v = (el.getAttribute('aria-haspopup') || '').toLowerCase();
+    if (v !== 'dialog' && v !== 'true' && v !== 'menu') return;
+    if (el.hasAttribute('aria-expanded')) return;
+    cands.push({
+      el: el,
+      sig: 'dlg|' + (el.id || '') + '|' + (el.getAttribute('aria-controls') || '') + '|' + trim(el.textContent),
+    });
+  });
+
+  // 4. Text-pattern triggers — narrow allowlist; skips submits and anything
+  // already covered by aria-expanded.
+  document.querySelectorAll('button, [role="button"]').forEach((el) => {
+    if (isSubmit(el)) return;
+    if (el.hasAttribute('aria-expanded')) return;
+    if (el.hasAttribute('aria-haspopup')) return;
+    const txt = trim(el.textContent);
+    if (!TEXT_REVEAL_RE.test(txt)) return;
+    cands.push({ el: el, sig: 'txt|' + (el.id || '') + '|' + txt });
   });
 
   for (const c of cands) {
@@ -288,9 +331,12 @@ def extract_fields(
     origins are restored so authenticated pages can be extracted.
 
     `reveal` opts into an active discovery pass: after the passive walk,
-    up to `reveal` reveal-triggers (`aria-expanded="false"` controls and
-    closed `<details>` summaries) are clicked in document order and the
-    page is re-extracted, merging any new fields by selector. Each
+    up to `reveal` reveal-triggers are clicked in document order and the
+    page is re-extracted, merging any new fields by selector. Trigger
+    predicates, in priority order: `aria-expanded="false"` controls,
+    closed `<details>` summaries, `aria-haspopup` dialog/menu openers,
+    and a narrow allowlist of reveal-verb buttons ("Add another",
+    "Show more", "More options", …). Submit buttons are excluded. Each
     trigger is clicked at most once per call, so the pass is bounded and
     idempotent.
     """

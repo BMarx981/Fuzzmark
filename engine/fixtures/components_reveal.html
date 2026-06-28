@@ -50,6 +50,21 @@
     </details>
   </section>
 
+  <section>
+    <h2>Dialog opener (aria-haspopup), lazy-mounted</h2>
+    <button id="open-coupon"
+            type="button"
+            aria-haspopup="dialog"
+            aria-controls="coupon-dialog">Apply coupon</button>
+    <dialog id="coupon-dialog"></dialog>
+  </section>
+
+  <section>
+    <h2>Text-pattern trigger ("Add another"), lazy-mounted</h2>
+    <div id="phones"></div>
+    <button id="add-phone" type="button">Add another phone</button>
+  </section>
+
   <template id="billing-fields">
     <label for="cardname">Cardholder name</label>
     <input id="cardname" name="cardname" type="text" maxlength="80" required>
@@ -75,6 +90,17 @@
   <template id="prefs-fields">
     <label for="referral">How did you hear about us?</label>
     <textarea id="referral" name="referral" maxlength="200"></textarea>
+  </template>
+
+  <template id="coupon-fields">
+    <label for="coupon">Coupon code</label>
+    <input id="coupon" name="coupon" type="text" maxlength="32">
+  </template>
+
+  <template id="phone-row">
+    <label>Phone
+      <input name="phone" type="tel">
+    </label>
   </template>
 
   <script>
@@ -107,6 +133,29 @@
         if (!open) mountInto('intl-panel', 'intl-fields');
       }
     });
+
+    const couponBtn = document.getElementById('open-coupon');
+    if (couponBtn) {
+      couponBtn.addEventListener('click', () => {
+        const dlg = document.getElementById('coupon-dialog');
+        if (dlg && dlg.children.length === 0) {
+          const tmpl = document.getElementById('coupon-fields');
+          if (tmpl) dlg.appendChild(tmpl.content.cloneNode(true));
+        }
+        if (dlg && !dlg.open && typeof dlg.show === 'function') dlg.show();
+      });
+    }
+
+    const addPhone = document.getElementById('add-phone');
+    if (addPhone) {
+      addPhone.addEventListener('click', () => {
+        const tmpl = document.getElementById('phone-row');
+        const phones = document.getElementById('phones');
+        if (tmpl && phones) {
+          phones.appendChild(tmpl.content.cloneNode(true));
+        }
+      });
+    }
 
     const prefs = document.getElementById('prefs');
     if (prefs) {
