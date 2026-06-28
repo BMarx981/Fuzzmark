@@ -8,6 +8,7 @@ import sys
 
 from .capture import capture_page
 from .compare import DEFAULT_THRESHOLD, compare_images
+from .driver import load_test, run_flow
 from .extractor import extract_fields
 from .suggestions import suggest
 
@@ -59,6 +60,18 @@ def _cmd_capture(args: argparse.Namespace) -> None:
     sys.stdout.write("\n")
 
 
+def _cmd_run(args: argparse.Namespace) -> None:
+    test = load_test(args.test)
+    result = run_flow(
+        test,
+        args.out,
+        viewport=(args.width, args.height),
+        headless=not args.headed,
+    )
+    json.dump(result.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
+    sys.stdout.write("\n")
+
+
 def _cmd_compare(args: argparse.Namespace) -> None:
     result = compare_images(
         args.baseline,
@@ -101,6 +114,16 @@ def main(argv: list[str] | None = None) -> None:
     )
     capture.add_argument("--headed", action="store_true", help="Run the browser headed")
     capture.set_defaults(func=_cmd_capture)
+
+    run_p = sub.add_parser(
+        "run", help="Execute a Test JSON flow and write per-step screenshots"
+    )
+    run_p.add_argument("test", help="Path to a Test JSON file")
+    run_p.add_argument("--out", required=True, help="Directory to write screenshots into")
+    run_p.add_argument("--width", type=int, default=1280, help="Viewport width (px)")
+    run_p.add_argument("--height", type=int, default=800, help="Viewport height (px)")
+    run_p.add_argument("--headed", action="store_true", help="Run the browser headed")
+    run_p.set_defaults(func=_cmd_run)
 
     compare = sub.add_parser(
         "compare",

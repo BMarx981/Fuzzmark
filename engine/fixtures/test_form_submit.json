@@ -1,0 +1,16 @@
+{
+  "name": "fixture-form-fill-and-submit",
+  "flow": [
+    { "kind": "visit", "url": "REPLACE_ME_AT_RUNTIME" },
+    { "kind": "capture", "name": "before-fill" },
+    { "kind": "fill", "selector": "#email", "value": "user@example.com" },
+    { "kind": "fill", "selector": "input[name='fullname']", "value": "Ada Lovelace" },
+    { "kind": "fill", "selector": "input[name='zip']", "value": "19711" },
+    { "kind": "fill", "selector": "input[name='age']", "value": "30" },
+    { "kind": "interact", "selector": "#state", "action": "select_option", "value": "DE" },
+    { "kind": "fill", "selector": "#msg", "value": "hello" },
+    { "kind": "capture", "name": "after-fill" },
+    { "kind": "submit", "selector": "button[type='submit']" },
+    { "kind": "capture", "name": "after-submit" }
+  ]
+}

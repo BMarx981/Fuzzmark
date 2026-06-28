@@ -1,0 +1,231 @@
+"""Pure-Python tests for the Test JSON loader and validator.
+
+No browser. Exercises every validation rule the runner relies on so the runner
+itself can trust its inputs.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from fuzzmark.driver import (
+    CAPTURE,
+    FILL,
+    INTERACT,
+    SUBMIT,
+    VISIT,
+    FlowStep,
+    Test,
+    load_test,
+    parse_test,
+)
+
+
+def _minimal_valid() -> dict:
+    return {
+        "name": "demo",
+        "flow": [
+            {"kind": "visit", "url": "about:blank"},
+            {"kind": "capture", "name": "shot"},
+        ],
+    }
+
+
+class TestParseHappyPath:
+    def test_returns_test_with_steps(self):
+        test = parse_test(_minimal_valid())
+        assert test.name == "demo"
+        assert [s.kind for s in test.flow] == [VISIT, CAPTURE]
+
+    def test_round_trip_through_to_dict(self):
+        test = parse_test(_minimal_valid())
+        assert parse_test(test.to_dict()).to_dict() == test.to_dict()
+
+    def test_load_from_disk(self, tmp_path: Path):
+        p = tmp_path / "t.json"
+        p.write_text(json.dumps(_minimal_valid()), encoding="utf-8")
+        test = load_test(p)
+        assert test.name == "demo"
+
+
+class TestTopLevel:
+    def test_name_required(self):
+        raw = _minimal_valid()
+        raw.pop("name")
+        with pytest.raises(ValueError, match="name"):
+            parse_test(raw)
+
+    def test_name_must_be_non_empty(self):
+        raw = _minimal_valid()
+        raw["name"] = "   "
+        with pytest.raises(ValueError, match="name"):
+            parse_test(raw)
+
+    def test_flow_required_and_non_empty(self):
+        with pytest.raises(ValueError, match="flow"):
+            parse_test({"name": "x", "flow": []})
+
+    def test_root_must_be_object(self):
+        with pytest.raises(ValueError):
+            parse_test([])  # type: ignore[arg-type]
+
+
+class TestFlowShape:
+    def test_must_start_with_visit(self):
+        raw = {
+            "name": "x",
+            "flow": [
+                {"kind": "capture", "name": "c"},
+                {"kind": "visit", "url": "about:blank"},
+            ],
+        }
+        with pytest.raises(ValueError, match="visit"):
+            parse_test(raw)
+
+    def test_must_contain_capture(self):
+        raw = {"name": "x", "flow": [{"kind": "visit", "url": "about:blank"}]}
+        with pytest.raises(ValueError, match="capture"):
+            parse_test(raw)
+
+    def test_capture_names_must_be_unique(self):
+        raw = {
+            "name": "x",
+            "flow": [
+                {"kind": "visit", "url": "about:blank"},
+                {"kind": "capture", "name": "a"},
+                {"kind": "capture", "name": "a"},
+            ],
+        }
+        with pytest.raises(ValueError, match="unique"):
+            parse_test(raw)
+
+
+class TestStepValidation:
+    def test_unknown_kind_raises(self):
+        raw = {"name": "x", "flow": [{"kind": "nope"}]}
+        with pytest.raises(ValueError, match="unknown kind"):
+            parse_test(raw)
+
+    def test_fill_requires_selector_and_value(self):
+        raw = {
+            "name": "x",
+            "flow": [
+                {"kind": "visit", "url": "about:blank"},
+                {"kind": "fill", "selector": "#a"},
+                {"kind": "capture", "name": "c"},
+            ],
+        }
+        with pytest.raises(ValueError, match="value"):
+            parse_test(raw)
+
+    def test_interact_requires_selector_and_action(self):
+        raw = {
+            "name": "x",
+            "flow": [
+                {"kind": "visit", "url": "about:blank"},
+                {"kind": "interact", "selector": "#a"},
+                {"kind": "capture", "name": "c"},
+            ],
+        }
+        with pytest.raises(ValueError, match="action"):
+            parse_test(raw)
+
+    def test_unknown_interact_action_raises(self):
+        raw = {
+            "name": "x",
+            "flow": [
+                {"kind": "visit", "url": "about:blank"},
+                {"kind": "interact", "selector": "#a", "action": "kick"},
+                {"kind": "capture", "name": "c"},
+            ],
+        }
+        with pytest.raises(ValueError, match="unknown action"):
+            parse_test(raw)
+
+    def test_select_option_requires_value(self):
+        raw = {
+            "name": "x",
+            "flow": [
+                {"kind": "visit", "url": "about:blank"},
+                {"kind": "interact", "selector": "#a", "action": "select_option"},
+                {"kind": "capture", "name": "c"},
+            ],
+        }
+        with pytest.raises(ValueError, match="select_option"):
+            parse_test(raw)
+
+    def test_submit_requires_selector(self):
+        raw = {
+            "name": "x",
+            "flow": [
+                {"kind": "visit", "url": "about:blank"},
+                {"kind": "submit"},
+                {"kind": "capture", "name": "c"},
+            ],
+        }
+        with pytest.raises(ValueError, match="selector"):
+            parse_test(raw)
+
+    def test_visit_requires_url(self):
+        raw = {
+            "name": "x",
+            "flow": [
+                {"kind": "visit"},
+                {"kind": "capture", "name": "c"},
+            ],
+        }
+        with pytest.raises(ValueError, match="url"):
+            parse_test(raw)
+
+
+class TestFlowStepSerialization:
+    def test_to_dict_drops_none_fields(self):
+        step = FlowStep(kind=VISIT, url="about:blank")
+        assert step.to_dict() == {"kind": "visit", "url": "about:blank"}
+
+    def test_capture_includes_full_page_only_when_false(self):
+        on = FlowStep(kind=CAPTURE, name="a")
+        off = FlowStep(kind=CAPTURE, name="b", full_page=False)
+        assert "full_page" not in on.to_dict()
+        assert off.to_dict()["full_page"] is False
+
+    def test_fill_round_trip(self):
+        step = FlowStep(kind=FILL, selector="#email", value="x@y.z")
+        assert step.to_dict() == {
+            "kind": "fill",
+            "selector": "#email",
+            "value": "x@y.z",
+        }
+
+    def test_interact_select_option_round_trip(self):
+        step = FlowStep(
+            kind=INTERACT, selector="#state", action="select_option", value="DE"
+        )
+        assert step.to_dict() == {
+            "kind": "interact",
+            "selector": "#state",
+            "value": "DE",
+            "action": "select_option",
+        }
+
+    def test_submit_round_trip(self):
+        step = FlowStep(kind=SUBMIT, selector="button[type='submit']")
+        assert step.to_dict() == {
+            "kind": "submit",
+            "selector": "button[type='submit']",
+        }
+
+
+class TestEnvelope:
+    def test_test_to_dict_round_trips(self):
+        test = Test(
+            name="t",
+            flow=[
+                FlowStep(kind=VISIT, url="about:blank"),
+                FlowStep(kind=CAPTURE, name="c"),
+            ],
+        )
+        assert parse_test(test.to_dict()).to_dict() == test.to_dict()
