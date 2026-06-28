@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 from typing import Callable
 
+from ..baselines import ApprovalResult, apply_approval, plan_approval
+from ..compare import DEFAULT_THRESHOLD, MaskRegion
 from ..driver import RunResult, load_test, parse_test, run_flow as _real_run_flow
 from ..extractor import Field, Option, Validation, extract_fields as _real_extract_fields
 from ..project import (
@@ -23,6 +25,7 @@ from ..project import (
     load_project,
     set_scan_path,
 )
+from ..report import Report, render_report
 from ..scanner import CrawlBounds, SiteMap, crawl as _real_crawl
 from ..suggestions import (
     CustomTablesError,
@@ -37,6 +40,7 @@ API_VERSION = "0.1.0"
 
 DEFAULT_SCAN_FILENAME = "scan.json"
 DEFAULT_RUNS_DIR = "runs"
+DEFAULT_REPORTS_DIR = "reports"
 RUN_RESULT_FILENAME = "result.json"
 
 
@@ -337,6 +341,131 @@ def _projects_tests_run(payload: dict) -> dict:
     }
 
 
+def _projects_tests_report(payload: dict) -> dict:
+    """Render a report from a run result and return the populated Report dict.
+
+    The HTML index + copied images land at `<source_dir>/reports/<test-stem>/`,
+    overwritten on each call. `baselines_dir` defaults to the project's
+    `baselines_resolved` so per-step diffs surface as soon as baselines exist.
+    """
+    path = _require_str(payload, "path")
+    run_result = payload.get("result")
+    if not isinstance(run_result, dict):
+        raise RouteError(400, "'result' must be a JSON object (a RunResult dict)")
+    project = _load_project(path)
+
+    threshold = _opt_threshold(payload.get("threshold"))
+    masks = _parse_named_masks(payload.get("masks"))
+
+    test_name = (run_result.get("test_name") or "report").strip() or "report"
+    out_dir = project.source_dir / DEFAULT_REPORTS_DIR / _safe_name(test_name)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    baselines = project.baselines_resolved
+    try:
+        report = render_report(
+            run_result,
+            out_dir,
+            baselines_dir=str(baselines) if baselines is not None else None,
+            threshold=threshold,
+            masks=masks,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise RouteError(400, f"render report failed: {exc}") from exc
+
+    return {
+        "report": report.to_dict(),
+        "report_dir": str(out_dir.resolve()),
+        "index_path": report.index_path,
+        "baselines_dir": str(baselines.resolve()) if baselines is not None else None,
+    }
+
+
+def _projects_baselines_approve(payload: dict) -> dict:
+    """Promote captures from a run result into the project's baselines directory.
+
+    Requires the project to declare a `baselines` path. Accepts an optional
+    `captures: [name, ...]` whitelist and a `dry_run` flag mirroring the CLI.
+    """
+    path = _require_str(payload, "path")
+    run_result = payload.get("result")
+    if not isinstance(run_result, dict):
+        raise RouteError(400, "'result' must be a JSON object (a RunResult dict)")
+    project = _load_project(path)
+
+    baselines = project.baselines_resolved
+    if baselines is None:
+        raise RouteError(
+            400,
+            "project has no 'baselines' path; set one before approving captures",
+        )
+
+    captures_raw = payload.get("captures")
+    capture_names: list[str] | None = None
+    if captures_raw is not None:
+        if not isinstance(captures_raw, list) or not all(
+            isinstance(c, str) and c.strip() for c in captures_raw
+        ):
+            raise RouteError(
+                400, "'captures' must be a list of non-empty strings when present"
+            )
+        capture_names = [c.strip() for c in captures_raw]
+
+    dry_run = bool(payload.get("dry_run", False))
+
+    plan = plan_approval(run_result, baselines, capture_names=capture_names)
+    result = apply_approval(plan, dry_run=dry_run)
+    return result.to_dict()
+
+
+def _opt_threshold(value: object) -> float:
+    if value is None:
+        return DEFAULT_THRESHOLD
+    if isinstance(value, bool):
+        raise RouteError(400, "'threshold' must be a number")
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise RouteError(400, f"'threshold' must be a number: {exc}") from exc
+
+
+def _parse_named_masks(
+    raw: object,
+) -> dict[str, list[MaskRegion]] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise RouteError(400, "'masks' must be an object keyed by capture name")
+    out: dict[str, list[MaskRegion]] = {}
+    for name, regions in raw.items():
+        if not isinstance(name, str) or not name.strip():
+            raise RouteError(400, "'masks' keys must be non-empty strings")
+        if not isinstance(regions, list):
+            raise RouteError(
+                400, f"masks[{name!r}] must be a list of mask regions"
+            )
+        parsed: list[MaskRegion] = []
+        for idx, region in enumerate(regions):
+            if not isinstance(region, dict):
+                raise RouteError(400, f"masks[{name!r}][{idx}] must be an object")
+            try:
+                parsed.append(
+                    MaskRegion(
+                        x=int(region["x"]),
+                        y=int(region["y"]),
+                        width=int(region["width"]),
+                        height=int(region["height"]),
+                        source=str(region.get("source", "region")),
+                    )
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise RouteError(
+                    400, f"masks[{name!r}][{idx}]: {exc}"
+                ) from exc
+        out[name] = parsed
+    return out
+
+
 def _resolve_project_relative(project: Project, raw: str, label: str) -> Path:
     candidate = Path(raw)
     if candidate.is_absolute():
@@ -508,6 +637,8 @@ ROUTES: dict[tuple[str, str], Route] = {
     ("POST", "/api/projects/suggest"): _projects_suggest,
     ("POST", "/api/projects/tests/save"): _projects_tests_save,
     ("POST", "/api/projects/tests/run"): _projects_tests_run,
+    ("POST", "/api/projects/tests/report"): _projects_tests_report,
+    ("POST", "/api/projects/baselines/approve"): _projects_baselines_approve,
 }
 
 

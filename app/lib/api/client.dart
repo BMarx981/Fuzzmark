@@ -323,6 +323,7 @@ class RunResult {
     required this.failedRequests,
     required this.runDir,
     required this.resultPath,
+    required this.raw,
   });
 
   final String testName;
@@ -332,6 +333,7 @@ class RunResult {
   final List<RunFailedRequest> failedRequests;
   final String runDir;
   final String resultPath;
+  final Map<String, dynamic> raw;
 
   bool get hasErrors =>
       consoleErrors.isNotEmpty ||
@@ -356,8 +358,160 @@ class RunResult {
           .toList(),
       runDir: json['run_dir'] as String,
       resultPath: json['result_path'] as String,
+      raw: result,
     );
   }
+}
+
+class ReportEntry {
+  ReportEntry({
+    required this.name,
+    required this.stepIndex,
+    required this.capturePath,
+    required this.verdict,
+    required this.baselinePath,
+    required this.diffPath,
+    required this.score,
+    required this.threshold,
+    required this.viewport,
+  });
+
+  final String name;
+  final int stepIndex;
+  final String capturePath;
+  final String verdict;
+  final String? baselinePath;
+  final String? diffPath;
+  final double? score;
+  final double? threshold;
+  final String? viewport;
+
+  factory ReportEntry.fromJson(Map<String, dynamic> json) => ReportEntry(
+        name: json['name'] as String,
+        stepIndex: (json['step_index'] as num).toInt(),
+        capturePath: json['capture_path'] as String,
+        verdict: json['verdict'] as String,
+        baselinePath: json['baseline_path'] as String?,
+        diffPath: json['diff_path'] as String?,
+        score: (json['score'] as num?)?.toDouble(),
+        threshold: (json['threshold'] as num?)?.toDouble(),
+        viewport: json['viewport'] as String?,
+      );
+}
+
+class RunReport {
+  RunReport({
+    required this.testName,
+    required this.entries,
+    required this.verdictCounts,
+    required this.consoleErrors,
+    required this.pageErrors,
+    required this.failedRequests,
+    required this.reportDir,
+    required this.indexPath,
+    required this.baselinesDir,
+  });
+
+  final String testName;
+  final List<ReportEntry> entries;
+  final Map<String, int> verdictCounts;
+  final List<RunConsoleMessage> consoleErrors;
+  final List<String> pageErrors;
+  final List<RunFailedRequest> failedRequests;
+  final String reportDir;
+  final String indexPath;
+  final String? baselinesDir;
+
+  bool get hasErrors =>
+      consoleErrors.isNotEmpty ||
+      pageErrors.isNotEmpty ||
+      failedRequests.isNotEmpty;
+
+  factory RunReport.fromJson(Map<String, dynamic> json) {
+    final report = json['report'] as Map<String, dynamic>;
+    return RunReport(
+      testName: report['test_name'] as String? ?? '',
+      entries: (report['entries'] as List? ?? [])
+          .map((e) => ReportEntry.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      verdictCounts: (report['verdict_counts'] as Map? ?? {})
+          .map((k, v) => MapEntry(k as String, (v as num).toInt())),
+      consoleErrors: (report['console_errors'] as List? ?? [])
+          .map((c) => RunConsoleMessage.fromJson(c as Map<String, dynamic>))
+          .toList(),
+      pageErrors: (report['page_errors'] as List? ?? [])
+          .whereType<String>()
+          .toList(),
+      failedRequests: (report['failed_requests'] as List? ?? [])
+          .map((r) => RunFailedRequest.fromJson(r as Map<String, dynamic>))
+          .toList(),
+      reportDir: json['report_dir'] as String,
+      indexPath: json['index_path'] as String? ?? '',
+      baselinesDir: json['baselines_dir'] as String?,
+    );
+  }
+}
+
+class ApprovalItem {
+  ApprovalItem({
+    required this.captureName,
+    required this.sourcePath,
+    required this.targetPath,
+    required this.action,
+  });
+
+  final String captureName;
+  final String sourcePath;
+  final String targetPath;
+  final String action;
+
+  factory ApprovalItem.fromJson(Map<String, dynamic> json) => ApprovalItem(
+        captureName: json['capture_name'] as String,
+        sourcePath: json['source_path'] as String,
+        targetPath: json['target_path'] as String,
+        action: json['action'] as String,
+      );
+}
+
+class ApprovalSkipped {
+  ApprovalSkipped({required this.captureName, required this.reason});
+
+  final String captureName;
+  final String reason;
+
+  factory ApprovalSkipped.fromJson(Map<String, dynamic> json) =>
+      ApprovalSkipped(
+        captureName: json['capture_name'] as String,
+        reason: json['reason'] as String,
+      );
+}
+
+class ApprovalResult {
+  ApprovalResult({
+    required this.testName,
+    required this.baselinesDir,
+    required this.dryRun,
+    required this.written,
+    required this.skipped,
+  });
+
+  final String testName;
+  final String baselinesDir;
+  final bool dryRun;
+  final List<ApprovalItem> written;
+  final List<ApprovalSkipped> skipped;
+
+  factory ApprovalResult.fromJson(Map<String, dynamic> json) => ApprovalResult(
+        testName: json['test_name'] as String? ?? '',
+        baselinesDir: json['baselines_dir'] as String? ?? '',
+        dryRun: json['dry_run'] == true,
+        written: (json['written'] as List? ?? [])
+            .map((a) => ApprovalItem.fromJson(a as Map<String, dynamic>))
+            .toList(),
+        skipped: (json['skipped'] as List? ?? [])
+            .map((s) => ApprovalSkipped.fromJson(s as Map<String, dynamic>))
+            .toList(),
+      );
 }
 
 class FuzzmarkApi {
@@ -468,6 +622,34 @@ class FuzzmarkApi {
       if (headed) 'headed': true,
     });
     return RunResult.fromJson(res);
+  }
+
+  Future<RunReport> reportTest({
+    required String projectPath,
+    required Map<String, dynamic> result,
+    double? threshold,
+  }) async {
+    final res = await _post('/api/projects/tests/report', {
+      'path': projectPath,
+      'result': result,
+      'threshold': ?threshold,
+    });
+    return RunReport.fromJson(res);
+  }
+
+  Future<ApprovalResult> approveBaselines({
+    required String projectPath,
+    required Map<String, dynamic> result,
+    List<String>? captureNames,
+    bool dryRun = false,
+  }) async {
+    final res = await _post('/api/projects/baselines/approve', {
+      'path': projectPath,
+      'result': result,
+      'captures': ?captureNames,
+      if (dryRun) 'dry_run': true,
+    });
+    return ApprovalResult.fromJson(res);
   }
 
   Future<FuzzmarkProject> initProject({

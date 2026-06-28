@@ -308,7 +308,9 @@ The MVP bar is **catch, not classify**. Correctly distinguishing size-shift from
 3. **Robustness** — alignment + structural diff + masks; the smart verdict classification.
 4. **Breadth** — multi-viewport matrix; full suggestion-category coverage; user-extensible suggestion tables; authenticated sessions.
 5. **Frontend** — the polished Flutter desktop app: projects, scan view, test builder with the suggestion panel, run view, diff review.
-6. **Mobile** — simulator-driven capture and comparison for native apps.
+6. **Component coverage** — widen passive extraction beyond native `input/select/textarea`: ARIA-role widgets (`combobox`, `listbox`, `textbox`, `switch`, `checkbox`, `radio`, `spinbutton`), `contenteditable` editors, shadow-DOM piercing, and same-origin iframe recursion. Closes the gap for component-library and web-component sites (Radix, Headless UI, MUI, Stencil, Lit).
+7. **Interaction discovery** — active extraction pass that clicks reveal-triggers (elements toggling `aria-expanded`, dialog openers, "Add another" buttons, multi-step wizards) and re-extracts, plus first-class CTA/button modeling for click-driven flows. Bounded and idempotent so a scan stays deterministic.
+8. **Mobile** — simulator-driven capture and comparison for native apps.
 
 ---
 

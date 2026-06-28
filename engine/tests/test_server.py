@@ -718,6 +718,217 @@ class TestTestsRunRoute:
         assert excinfo.value.status == 400
 
 
+class TestReportRoute:
+    def _project_with_captures(
+        self, tmp_path: Path, *, baselines: bool = True
+    ) -> tuple[str, list[Path]]:
+        import cv2
+        import numpy as np
+
+        shots_dir = tmp_path / "shots"
+        shots_dir.mkdir()
+        cap_paths: list[Path] = []
+        for name, color in (("home", (0, 0, 0)), ("after", (255, 255, 255))):
+            img = np.full((40, 60, 3), color, dtype=np.uint8)
+            p = shots_dir / f"{name}.png"
+            cv2.imwrite(str(p), img)
+            cap_paths.append(p)
+
+        path = str(tmp_path / "project.json")
+        dispatch(
+            "POST",
+            "/api/projects/init",
+            {"path": path, "name": "demo", "base_url": "http://x/"},
+        )
+        if baselines:
+            # Wire a baselines dir and seed one matching baseline so the
+            # report has a mix of pass / no-baseline / mismatch verdicts.
+            baselines_dir = tmp_path / "baselines"
+            baselines_dir.mkdir()
+            cv2.imwrite(
+                str(baselines_dir / "home.png"),
+                np.full((40, 60, 3), (0, 0, 0), dtype=np.uint8),
+            )
+            Path(path).write_text(
+                json.dumps(
+                    {
+                        "name": "demo",
+                        "base_url": "http://x/",
+                        "baselines": "baselines",
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return path, cap_paths
+
+    def _run_result(
+        self, paths: list[Path], *, test_name: str = "smoke"
+    ) -> dict:
+        return {
+            "test_name": test_name,
+            "captures": [
+                {
+                    "name": p.stem,
+                    "step_index": i,
+                    "screenshot_path": str(p),
+                    "masks": [],
+                }
+                for i, p in enumerate(paths)
+            ],
+            "console_errors": [],
+            "page_errors": [],
+            "failed_requests": [],
+        }
+
+    def test_renders_report_and_returns_entries(self, tmp_path: Path) -> None:
+        path, paths = self._project_with_captures(tmp_path)
+        body = dispatch(
+            "POST",
+            "/api/projects/tests/report",
+            {"path": path, "result": self._run_result(paths)},
+        )
+        assert body["report_dir"] == str(
+            (tmp_path / "reports" / "smoke").resolve()
+        )
+        assert Path(body["index_path"]).exists()
+        verdicts = {e["verdict"] for e in body["report"]["entries"]}
+        assert verdicts == {"pass", "no-baseline"}
+        assert body["baselines_dir"] == str((tmp_path / "baselines").resolve())
+
+    def test_rejects_non_object_result(self, tmp_path: Path) -> None:
+        path, _ = self._project_with_captures(tmp_path)
+        with pytest.raises(RouteError) as excinfo:
+            dispatch(
+                "POST",
+                "/api/projects/tests/report",
+                {"path": path, "result": []},
+            )
+        assert excinfo.value.status == 400
+
+    def test_accepts_per_capture_masks(self, tmp_path: Path) -> None:
+        path, paths = self._project_with_captures(tmp_path)
+        body = dispatch(
+            "POST",
+            "/api/projects/tests/report",
+            {
+                "path": path,
+                "result": self._run_result(paths),
+                "masks": {
+                    "home": [
+                        {"x": 0, "y": 0, "width": 5, "height": 5}
+                    ]
+                },
+            },
+        )
+        # Doesn't crash and still emits an entry for the masked capture.
+        names = {e["name"] for e in body["report"]["entries"]}
+        assert "home" in names
+
+
+class TestApproveRoute:
+    def _project(self, tmp_path: Path) -> tuple[str, Path, Path]:
+        import cv2
+        import numpy as np
+
+        shots_dir = tmp_path / "shots"
+        shots_dir.mkdir()
+        cap = shots_dir / "home.png"
+        cv2.imwrite(str(cap), np.zeros((10, 10, 3), dtype=np.uint8))
+
+        path = str(tmp_path / "project.json")
+        dispatch(
+            "POST",
+            "/api/projects/init",
+            {"path": path, "name": "demo", "base_url": "http://x/"},
+        )
+        Path(path).write_text(
+            json.dumps(
+                {
+                    "name": "demo",
+                    "base_url": "http://x/",
+                    "baselines": "baselines",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path, cap, tmp_path / "baselines"
+
+    def _result(self, cap: Path) -> dict:
+        return {
+            "test_name": "smoke",
+            "captures": [
+                {
+                    "name": "home",
+                    "step_index": 0,
+                    "screenshot_path": str(cap),
+                    "masks": [],
+                }
+            ],
+            "console_errors": [],
+            "page_errors": [],
+            "failed_requests": [],
+        }
+
+    def test_writes_baseline_files(self, tmp_path: Path) -> None:
+        path, cap, baselines = self._project(tmp_path)
+        body = dispatch(
+            "POST",
+            "/api/projects/baselines/approve",
+            {"path": path, "result": self._result(cap)},
+        )
+        assert body["written_count"] == 1
+        assert (baselines / "home.png").exists()
+        assert body["dry_run"] is False
+
+    def test_dry_run_writes_nothing(self, tmp_path: Path) -> None:
+        path, cap, baselines = self._project(tmp_path)
+        body = dispatch(
+            "POST",
+            "/api/projects/baselines/approve",
+            {"path": path, "result": self._result(cap), "dry_run": True},
+        )
+        assert body["written_count"] == 1
+        assert body["dry_run"] is True
+        assert not (baselines / "home.png").exists()
+
+    def test_captures_whitelist(self, tmp_path: Path) -> None:
+        path, cap, _ = self._project(tmp_path)
+        body = dispatch(
+            "POST",
+            "/api/projects/baselines/approve",
+            {
+                "path": path,
+                "result": self._result(cap),
+                "captures": ["nope"],
+            },
+        )
+        assert body["written_count"] == 0
+        assert any(s["reason"] == "not-selected" for s in body["skipped"]) or any(
+            s["reason"] == "unknown" for s in body["skipped"]
+        )
+
+    def test_requires_project_baselines(self, tmp_path: Path) -> None:
+        import cv2
+        import numpy as np
+
+        cap = tmp_path / "home.png"
+        cv2.imwrite(str(cap), np.zeros((10, 10, 3), dtype=np.uint8))
+        path = str(tmp_path / "project.json")
+        dispatch(
+            "POST",
+            "/api/projects/init",
+            {"path": path, "name": "demo", "base_url": "http://x/"},
+        )
+        with pytest.raises(RouteError) as excinfo:
+            dispatch(
+                "POST",
+                "/api/projects/baselines/approve",
+                {"path": path, "result": self._result(cap)},
+            )
+        assert excinfo.value.status == 400
+        assert "baselines" in excinfo.value.message
+
+
 class TestHttpServer:
     def test_end_to_end_health_and_project_lifecycle(self, tmp_path: Path) -> None:
         server = make_server(host="127.0.0.1", port=0)

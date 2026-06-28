@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import 'report_screen.dart';
 
 class RunScreen extends StatefulWidget {
   const RunScreen({
@@ -54,6 +55,21 @@ class _RunScreenState extends State<RunScreen> {
   void _setError(String message) {
     if (!mounted) return;
     setState(() => _error = message);
+  }
+
+  Future<void> _openReport() async {
+    final result = _result;
+    if (result == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ReportScreen(
+          api: widget.api,
+          project: widget.project,
+          runResult: result,
+          onClose: () => Navigator.of(context).pop(),
+        ),
+      ),
+    );
   }
 
   @override
@@ -109,6 +125,13 @@ class _RunScreenState extends State<RunScreen> {
                               : (v) => setState(() => _headed = v),
                         ),
                         const SizedBox(width: 12),
+                        if (_result != null)
+                          OutlinedButton.icon(
+                            onPressed: _running ? null : _openReport,
+                            icon: const Icon(Icons.assessment_outlined),
+                            label: const Text('View report'),
+                          ),
+                        if (_result != null) const SizedBox(width: 8),
                         FilledButton.icon(
                           onPressed: _running ? null : _run,
                           icon: const Icon(Icons.play_arrow),
