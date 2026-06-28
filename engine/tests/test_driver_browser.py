@@ -17,6 +17,7 @@ from fuzzmark.driver import (
     VISIT,
     FlowStep,
     Test,
+    Viewport,
     run_flow,
 )
 
@@ -144,3 +145,34 @@ def test_submit_does_not_raise_on_form_without_handler(
     )
     result = run_flow(flow, tmp_path / "captures")
     assert len(result.captures) == 1
+
+
+def test_viewport_matrix_writes_one_capture_per_viewport(
+    tmp_path: Path, fixture_form_url: str
+) -> None:
+    """A test with two viewports runs the flow twice and tags each capture."""
+    flow = Test(
+        name="matrix",
+        viewports=(
+            Viewport(name="desktop", width=1280, height=800),
+            Viewport(name="mobile", width=390, height=844),
+        ),
+        flow=[
+            FlowStep(kind=VISIT, url=fixture_form_url),
+            FlowStep(kind=CAPTURE, name="home"),
+        ],
+    )
+    out = tmp_path / "captures"
+    result = run_flow(flow, out)
+
+    by_vp = {(c.viewport, c.name) for c in result.captures}
+    assert by_vp == {("desktop", "home"), ("mobile", "home")}
+    desktop = next(c for c in result.captures if c.viewport == "desktop")
+    mobile = next(c for c in result.captures if c.viewport == "mobile")
+    assert Path(desktop.screenshot_path).parent == out / "desktop"
+    assert Path(mobile.screenshot_path).parent == out / "mobile"
+    # Different viewport widths must yield different pixel content.
+    assert (
+        Path(desktop.screenshot_path).read_bytes()
+        != Path(mobile.screenshot_path).read_bytes()
+    )

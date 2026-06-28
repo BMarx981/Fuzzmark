@@ -30,6 +30,18 @@ INTERACT_ACTIONS = (CLICK, CHECK, UNCHECK, SELECT_OPTION)
 
 
 @dataclass(frozen=True)
+class Viewport:
+    """A named viewport size to run a flow at."""
+
+    name: str
+    width: int
+    height: int
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "width": self.width, "height": self.height}
+
+
+@dataclass(frozen=True)
 class FlowStep:
     """One step of a flow. Fields are union-typed by `kind`; the loader validates."""
 
@@ -66,9 +78,13 @@ class Test:
 
     name: str
     flow: list[FlowStep]
+    viewports: tuple[Viewport, ...] = ()
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "flow": [s.to_dict() for s in self.flow]}
+        out: dict = {"name": self.name, "flow": [s.to_dict() for s in self.flow]}
+        if self.viewports:
+            out["viewports"] = [v.to_dict() for v in self.viewports]
+        return out
 
 
 @dataclass(frozen=True)
@@ -79,14 +95,18 @@ class CaptureArtifact:
     step_index: int
     screenshot_path: str
     masks: tuple[MaskRegion, ...] = ()
+    viewport: Optional[str] = None
 
     def to_dict(self) -> dict:
-        return {
+        out: dict = {
             "name": self.name,
             "step_index": self.step_index,
             "screenshot_path": self.screenshot_path,
             "masks": [m.to_dict() for m in self.masks],
         }
+        if self.viewport is not None:
+            out["viewport"] = self.viewport
+        return out
 
 
 @dataclass

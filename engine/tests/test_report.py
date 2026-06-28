@@ -261,3 +261,84 @@ class TestPaths:
         html = Path(report.index_path).read_text(encoding="utf-8")
         assert 'src="images/a.png"' in html
         assert str(tmp_path) not in html
+
+
+class TestViewports:
+    @staticmethod
+    def _capture(
+        captures_dir: Path,
+        name: str,
+        idx: int,
+        color: tuple[int, int, int],
+        viewport: str,
+    ) -> dict:
+        sub = captures_dir / viewport
+        sub.mkdir(parents=True, exist_ok=True)
+        return {
+            "name": name,
+            "step_index": idx,
+            "screenshot_path": str(_solid(sub / f"{name}.png", color)),
+            "viewport": viewport,
+        }
+
+    def _viewport_run(self, captures_dir: Path) -> dict:
+        return {
+            "test_name": "demo",
+            "captures": [
+                self._capture(captures_dir, "home", 0, (50, 50, 50), "desktop"),
+                self._capture(captures_dir, "home", 0, (60, 60, 60), "mobile"),
+            ],
+            "console_errors": [],
+            "page_errors": [],
+            "failed_requests": [],
+        }
+
+    def test_baselines_resolved_per_viewport(self, tmp_path: Path) -> None:
+        baselines = tmp_path / "baselines"
+        for vp, color in [("desktop", (50, 50, 50)), ("mobile", (60, 60, 60))]:
+            d = baselines / vp
+            d.mkdir(parents=True)
+            _solid(d / "home.png", color)
+
+        result = self._viewport_run(tmp_path / "shots")
+        report = render_report(result, tmp_path / "report", baselines_dir=baselines)
+
+        by_vp = {(e.viewport, e.verdict) for e in report.entries}
+        assert by_vp == {("desktop", PASS), ("mobile", PASS)}
+
+    def test_html_groups_by_viewport_with_per_group_summary(
+        self, tmp_path: Path
+    ) -> None:
+        baselines = tmp_path / "baselines"
+        # desktop matches → pass; mobile mismatches → content-change
+        (baselines / "desktop").mkdir(parents=True)
+        (baselines / "mobile").mkdir(parents=True)
+        _solid(baselines / "desktop" / "home.png", (50, 50, 50))
+        _solid(baselines / "mobile" / "home.png", (255, 255, 255))
+
+        result = self._viewport_run(tmp_path / "shots")
+        report = render_report(result, tmp_path / "report", baselines_dir=baselines)
+        html = Path(report.index_path).read_text(encoding="utf-8")
+
+        assert '<section class="viewport-group">' in html
+        assert ">desktop<" in html
+        assert ">mobile<" in html
+        assert report.verdict_counts == {PASS: 1, CONTENT_CHANGE: 1}
+
+    def test_per_viewport_image_filenames_avoid_collision(
+        self, tmp_path: Path
+    ) -> None:
+        result = self._viewport_run(tmp_path / "shots")
+        report = render_report(result, tmp_path / "report")
+        images = (tmp_path / "report" / "images")
+        assert (images / "desktop__home.png").exists()
+        assert (images / "mobile__home.png").exists()
+        # Both entries kept their viewport tag through to the model
+        viewports = {e.viewport for e in report.entries}
+        assert viewports == {"desktop", "mobile"}
+
+    def test_untagged_captures_render_flat(self, tmp_path: Path) -> None:
+        result = _run_result(tmp_path / "shots", [("a", 0, (0, 0, 0))])
+        report = render_report(result, tmp_path / "report")
+        html = Path(report.index_path).read_text(encoding="utf-8")
+        assert '<section class="viewport-group">' not in html

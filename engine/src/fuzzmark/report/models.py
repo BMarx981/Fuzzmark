@@ -23,10 +23,17 @@ class ReportEntry:
     diff_path: Optional[str] = None
     score: Optional[float] = None
     threshold: Optional[float] = None
+    viewport: Optional[str] = None
 
     @classmethod
     def from_compare(
-        cls, *, name: str, step_index: int, capture_path: str, result: CompareResult
+        cls,
+        *,
+        name: str,
+        step_index: int,
+        capture_path: str,
+        result: CompareResult,
+        viewport: Optional[str] = None,
     ) -> "ReportEntry":
         return cls(
             name=name,
@@ -37,15 +44,24 @@ class ReportEntry:
             diff_path=result.diff_path,
             score=result.score,
             threshold=result.threshold,
+            viewport=viewport,
         )
 
     @classmethod
-    def no_baseline(cls, *, name: str, step_index: int, capture_path: str) -> "ReportEntry":
+    def no_baseline(
+        cls,
+        *,
+        name: str,
+        step_index: int,
+        capture_path: str,
+        viewport: Optional[str] = None,
+    ) -> "ReportEntry":
         return cls(
             name=name,
             step_index=step_index,
             capture_path=capture_path,
             verdict=NO_BASELINE,
+            viewport=viewport,
         )
 
     def to_dict(self) -> dict:

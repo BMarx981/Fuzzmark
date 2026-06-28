@@ -4,6 +4,10 @@ Pure: takes a RunResult-shaped dict in, writes files to disk, returns a Report.
 The HTML is self-contained — all assets (capture/baseline/diff PNGs) are copied
 into the output directory, so the report folder is portable and trivially
 served from any static host.
+
+Captures tagged with a `viewport` are grouped under per-viewport sections with
+their own verdict summaries; untagged captures render in a single flat list as
+before.
 """
 
 from __future__ import annotations
@@ -11,8 +15,9 @@ from __future__ import annotations
 import html
 import shutil
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
 
+from ..baselines import baseline_path as baseline_target_path
 from ..compare import (
     CONTENT_CHANGE,
     DEFAULT_THRESHOLD,
@@ -51,12 +56,15 @@ def render_report(
             `console_errors`, `page_errors`, `failed_requests`.
         output_dir: Destination directory; created if missing. Existing files
             are overwritten so re-running is idempotent.
-        baselines_dir: Optional directory of approved baselines, keyed by
-            `<capture name>.png`. Captures without a matching baseline are
-            recorded with the `no-baseline` verdict.
+        baselines_dir: Optional directory of approved baselines. Untagged
+            captures resolve to `<baselines>/<name>.png`; viewport-tagged
+            captures resolve to `<baselines>/<viewport>/<name>.png`. Captures
+            without a matching baseline are recorded with the `no-baseline`
+            verdict.
         threshold: SSIM threshold passed to the comparison engine.
         masks: Optional map of capture name → list of `MaskRegion` blanked on
-            both baseline and capture before scoring.
+            both baseline and capture before scoring. Applies to every viewport
+            of that capture name.
     """
     out_dir = Path(output_dir)
     images_dir = out_dir / _IMAGES_SUBDIR
@@ -102,6 +110,10 @@ def _masks_for(
     return [MaskRegion(**m) for m in raw]
 
 
+def _image_key(name: str, viewport: Optional[str]) -> str:
+    return f"{viewport}__{name}" if viewport else name
+
+
 def _build_entry(
     capture: dict,
     images_dir: Path,
@@ -112,23 +124,28 @@ def _build_entry(
 ) -> ReportEntry:
     name = capture["name"]
     step_index = capture["step_index"]
+    viewport = capture.get("viewport") or None
     src = Path(capture["screenshot_path"])
-    capture_dst = images_dir / f"{name}.png"
+    image_key = _image_key(name, viewport)
+    capture_dst = images_dir / f"{image_key}.png"
     shutil.copyfile(src, capture_dst)
 
     baseline_src: Path | None = None
     if baselines_dir is not None:
-        candidate = baselines_dir / f"{name}.png"
+        candidate = baseline_target_path(baselines_dir, name, viewport=viewport)
         if candidate.exists():
             baseline_src = candidate
 
     if baseline_src is None:
         return ReportEntry.no_baseline(
-            name=name, step_index=step_index, capture_path=str(capture_dst)
+            name=name,
+            step_index=step_index,
+            capture_path=str(capture_dst),
+            viewport=viewport,
         )
 
-    baseline_dst = images_dir / f"{name}__baseline.png"
-    diff_dst = images_dir / f"{name}__diff.png"
+    baseline_dst = images_dir / f"{image_key}__baseline.png"
+    diff_dst = images_dir / f"{image_key}__diff.png"
     shutil.copyfile(baseline_src, baseline_dst)
     result = compare_images(
         baseline_dst,
@@ -138,7 +155,11 @@ def _build_entry(
         masks=masks,
     )
     return ReportEntry.from_compare(
-        name=name, step_index=step_index, capture_path=str(capture_dst), result=result
+        name=name,
+        step_index=step_index,
+        capture_path=str(capture_dst),
+        result=result,
+        viewport=viewport,
     )
 
 
@@ -155,25 +176,75 @@ def _rel(path: str, base: Path) -> str:
         return path
 
 
-def _render_html(report: Report) -> str:
-    base = Path(report.output_dir)
-    counts = report.verdict_counts
-    title = html.escape(report.test_name or "Fuzzmark report")
+def _group_entries(
+    entries: list[ReportEntry],
+) -> list[tuple[Optional[str], list[ReportEntry]]]:
+    """Return entries grouped by viewport, preserving first-seen order.
 
-    summary_chips = "".join(
+    A single None group means no entry was viewport-tagged — render flat.
+    """
+    order: list[Optional[str]] = []
+    buckets: dict[Optional[str], list[ReportEntry]] = {}
+    for e in entries:
+        key = e.viewport
+        if key not in buckets:
+            buckets[key] = []
+            order.append(key)
+        buckets[key].append(e)
+    return [(k, buckets[k]) for k in order]
+
+
+def _counts(entries: Iterable[ReportEntry]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for e in entries:
+        counts[e.verdict] = counts.get(e.verdict, 0) + 1
+    return counts
+
+
+def _summary_chips(counts: dict[str, int]) -> str:
+    return "".join(
         f'<span class="chip chip-{html.escape(v)}">{html.escape(v)} '
         f'<b>{counts[v]}</b></span>'
         for v in sorted(counts, key=lambda k: _VERDICT_ORDER.get(k, 99))
     )
 
-    sections = "\n".join(_render_entry(e, base) for e in _ordered(report.entries))
+
+def _render_html(report: Report) -> str:
+    base = Path(report.output_dir)
+    title = html.escape(report.test_name or "Fuzzmark report")
+    overall_chips = _summary_chips(report.verdict_counts)
+    groups = _group_entries(report.entries)
+    grouped = len(groups) > 1 or (groups and groups[0][0] is not None)
+
+    if grouped:
+        sections = "\n".join(_render_viewport_group(vp, es, base) for vp, es in groups)
+    else:
+        entries = groups[0][1] if groups else []
+        sections = "\n".join(_render_entry(e, base) for e in _ordered(entries))
+
     errors_html = _render_errors(report)
 
     return _PAGE.format(
         title=title,
-        summary=summary_chips,
+        summary=overall_chips,
         sections=sections or '<p class="empty">No captures in this run.</p>',
         errors=errors_html,
+    )
+
+
+def _render_viewport_group(
+    viewport: Optional[str], entries: list[ReportEntry], base: Path
+) -> str:
+    label = html.escape(viewport or "default")
+    counts = _counts(entries)
+    chips = _summary_chips(counts)
+    body = "\n".join(_render_entry(e, base) for e in _ordered(entries))
+    return (
+        '<section class="viewport-group">'
+        f'<header class="viewport-head"><h2>{label}</h2>'
+        f'<div class="summary">{chips}</div></header>'
+        f'{body}'
+        '</section>'
     )
 
 
@@ -270,6 +341,10 @@ _PAGE = """<!doctype html>
   .chip-size-shift {{ background: var(--size-shift); }}
   .chip-no-baseline {{ background: var(--no-baseline); }}
   .chip-error {{ background: var(--error); }}
+  .viewport-group {{ margin-bottom: 24px; }}
+  .viewport-head {{ display: flex; justify-content: space-between; align-items: center;
+                    padding: 8px 0; border-bottom: 1px solid var(--line); margin-bottom: 12px; }}
+  .viewport-head h2 {{ margin: 0; font-size: 16px; font-family: ui-monospace, Menlo, monospace; }}
   .entry {{ background: white; border: 1px solid var(--line); border-radius: 8px;
             padding: 16px; margin-bottom: 16px; }}
   .entry header {{ display: flex; justify-content: space-between; align-items: center; }}

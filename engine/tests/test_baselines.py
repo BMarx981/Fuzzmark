@@ -48,6 +48,22 @@ class TestStore:
     def test_existing_baselines_handles_missing_dir(self, tmp_path: Path) -> None:
         assert existing_baselines(tmp_path / "nope") == set()
 
+    def test_baseline_path_nests_under_viewport(self, tmp_path: Path) -> None:
+        assert (
+            baseline_path(tmp_path, "home", viewport="mobile")
+            == tmp_path / "mobile" / "home.png"
+        )
+
+    def test_existing_baselines_scoped_to_viewport(self, tmp_path: Path) -> None:
+        _write_png(tmp_path / "flat.png")
+        _write_png(tmp_path / "mobile" / "a.png")
+        _write_png(tmp_path / "mobile" / "b.png")
+        _write_png(tmp_path / "desktop" / "a.png")
+        assert existing_baselines(tmp_path) == {"flat"}
+        assert existing_baselines(tmp_path, viewport="mobile") == {"a", "b"}
+        assert existing_baselines(tmp_path, viewport="desktop") == {"a"}
+        assert existing_baselines(tmp_path, viewport="missing") == set()
+
 
 class TestPlan:
     def test_plans_every_capture_when_no_filter(self, tmp_path: Path) -> None:
@@ -146,3 +162,70 @@ class TestApply:
         result = apply_approval(plan)
         reasons = {(s.capture_name, s.reason) for s in result.skipped}
         assert reasons == {("checkout", "not-selected")}
+
+
+class TestViewports:
+    def _viewport_run(self, tmp_path: Path) -> dict:
+        captures = []
+        for idx, (name, vp) in enumerate(
+            [("home", "desktop"), ("home", "mobile"), ("checkout", "desktop")]
+        ):
+            src = _write_png(
+                tmp_path / "shots" / vp / f"{name}.png",
+                f"<{vp}-{name}>".encode(),
+            )
+            captures.append(
+                {
+                    "name": name,
+                    "step_index": idx,
+                    "screenshot_path": str(src),
+                    "viewport": vp,
+                }
+            )
+        return {"test_name": "demo", "captures": captures}
+
+    def test_plan_targets_are_viewport_nested(self, tmp_path: Path) -> None:
+        run = self._viewport_run(tmp_path)
+        base = tmp_path / "baselines"
+        plan = plan_approval(run, base)
+
+        targets = {
+            (a.capture_name, Path(a.target_path).relative_to(base).as_posix())
+            for a in plan.approvals
+        }
+        assert targets == {
+            ("home", "desktop/home.png"),
+            ("home", "mobile/home.png"),
+            ("checkout", "desktop/checkout.png"),
+        }
+        assert all(a.action == NEW for a in plan.approvals)
+
+    def test_apply_writes_per_viewport_files(self, tmp_path: Path) -> None:
+        run = self._viewport_run(tmp_path)
+        base = tmp_path / "baselines"
+        apply_approval(plan_approval(run, base))
+
+        assert (base / "desktop" / "home.png").read_bytes() == b"<desktop-home>"
+        assert (base / "mobile" / "home.png").read_bytes() == b"<mobile-home>"
+        assert (base / "desktop" / "checkout.png").read_bytes() == b"<desktop-checkout>"
+
+    def test_per_viewport_update_action_is_independent(self, tmp_path: Path) -> None:
+        run = self._viewport_run(tmp_path)
+        base = tmp_path / "baselines"
+        _write_png(base / "desktop" / "home.png", b"<old>")
+        plan = plan_approval(run, base)
+
+        by_target = {
+            Path(a.target_path).relative_to(base).as_posix(): a.action
+            for a in plan.approvals
+        }
+        assert by_target["desktop/home.png"] == UPDATED
+        assert by_target["mobile/home.png"] == NEW
+
+    def test_name_filter_matches_across_viewports(self, tmp_path: Path) -> None:
+        run = self._viewport_run(tmp_path)
+        plan = plan_approval(
+            run, tmp_path / "baselines", capture_names=["home"]
+        )
+        assert {a.capture_name for a in plan.approvals} == {"home"}
+        assert len(plan.approvals) == 2  # home @ desktop and home @ mobile

@@ -8,6 +8,9 @@ files move:
    that would become a new or updated baseline.
 2. `apply_approval` copies the source captures to their baseline targets and
    returns the `ApprovalResult`. `dry_run=True` skips all I/O.
+
+Viewport-tagged captures resolve to `<baselines_dir>/<viewport>/<name>.png`;
+untagged captures resolve to the flat `<baselines_dir>/<name>.png` layout.
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ from .models import (
     ApprovalResult,
     SkippedApproval,
 )
-from .store import baseline_path, existing_baselines
+from .store import baseline_path
 
 
 def plan_approval(
@@ -44,7 +47,6 @@ def plan_approval(
     """
     base_dir = Path(baselines_dir)
     captures = run_result.get("captures", []) or []
-    have = existing_baselines(base_dir)
 
     filter_set = set(capture_names) if capture_names is not None else None
     filtered_names: set[str] = set()
@@ -71,8 +73,9 @@ def plan_approval(
             plan.skipped.append(SkippedApproval(capture_name=name, reason="source-not-found"))
             continue
 
-        target = baseline_path(base_dir, name)
-        action = UPDATED if name in have else NEW
+        viewport = capture.get("viewport") or None
+        target = baseline_path(base_dir, name, viewport=viewport)
+        action = UPDATED if target.is_file() else NEW
         plan.approvals.append(
             ApprovalItem(
                 capture_name=name,

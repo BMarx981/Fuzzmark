@@ -8,6 +8,7 @@ runner trusts what it receives.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from ..compare import MaskRegion
@@ -21,7 +22,11 @@ from .models import (
     VISIT,
     FlowStep,
     Test,
+    Viewport,
 )
+
+
+_VIEWPORT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 
 _REQUIRED_BY_KIND: dict[str, frozenset[str]] = {
@@ -60,7 +65,42 @@ def parse_test(raw: dict) -> Test:
     if len(names) != len(set(names)):
         raise ValueError("capture step names must be unique within a flow")
 
-    return Test(name=name, flow=steps)
+    viewports = _parse_viewports(raw.get("viewports"))
+
+    return Test(name=name, flow=steps, viewports=viewports)
+
+
+def _parse_viewports(raw: object) -> tuple[Viewport, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("'viewports' must be a non-empty list when present")
+    parsed = tuple(_parse_viewport(v, i) for i, v in enumerate(raw))
+    names = [v.name for v in parsed]
+    if len(names) != len(set(names)):
+        raise ValueError("viewport names must be unique within a test")
+    return parsed
+
+
+def _parse_viewport(raw: object, idx: int) -> Viewport:
+    where = f"viewports[{idx}]"
+    if not isinstance(raw, dict):
+        raise ValueError(f"{where}: must be an object")
+    name = raw.get("name")
+    if not isinstance(name, str) or not _VIEWPORT_NAME_RE.match(name):
+        raise ValueError(
+            f"{where}: 'name' must match [A-Za-z0-9][A-Za-z0-9_-]*"
+        )
+    try:
+        width = int(raw["width"])
+        height = int(raw["height"])
+    except KeyError as exc:
+        raise ValueError(f"{where}: missing field {exc.args[0]!r}") from exc
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{where}: width/height must be integers") from exc
+    if width <= 0 or height <= 0:
+        raise ValueError(f"{where}: width and height must be positive")
+    return Viewport(name=name, width=width, height=height)
 
 
 def _parse_step(raw: object, idx: int) -> FlowStep:

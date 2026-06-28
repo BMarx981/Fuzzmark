@@ -1,8 +1,10 @@
-"""Execute a `Test` flow in a single Playwright session.
+"""Execute a `Test` flow in a real Playwright session.
 
-One browser launch per run; one Page; listeners attached once so console,
-page-error, and failed-request signals accumulate across every step. Each
-`capture` step writes a screenshot keyed by step name into `output_dir`.
+One browser launch per run. If the test declares viewports, the flow runs once
+per viewport in its own context; otherwise it runs once at the runner's default
+viewport (legacy single-viewport behavior). Screenshots from `capture` steps
+land at `<out>/<viewport>/<step>.png` when viewports are configured, or flat
+`<out>/<step>.png` when not.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from .models import (
     FlowStep,
     RunResult,
     Test,
+    Viewport,
 )
 
 
@@ -38,16 +41,22 @@ def run_flow(
     timeout_ms: int = 15000,
     headless: bool = True,
 ) -> RunResult:
-    """Drive `test` against a fresh browser context and return a `RunResult`.
+    """Drive `test` against a fresh browser and return a `RunResult`.
 
-    Screenshots from every `capture` step are written to `output_dir` as
-    `<step.name>.png`. The directory is created if missing.
+    When the test declares `viewports`, the flow runs once per viewport in its
+    own context; the `viewport` argument is ignored in that case. When the test
+    declares none, the flow runs once at the supplied `viewport` and capture
+    artifacts are untagged.
     """
     from playwright.sync_api import sync_playwright
 
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    width, height = viewport
+
+    viewports: tuple[Viewport, ...] = test.viewports or (
+        Viewport(name="", width=viewport[0], height=viewport[1]),
+    )
+    tag_with_viewport = bool(test.viewports)
 
     console_errors: list[ConsoleMessage] = []
     page_errors: list[str] = []
@@ -56,54 +65,24 @@ def run_flow(
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=headless)
-        context = browser.new_context(viewport={"width": width, "height": height})
-        page = context.new_page()
-
-        def _on_console(msg) -> None:
-            if msg.type in _CONSOLE_LEVELS_TRACKED:
-                console_errors.append(ConsoleMessage(level=msg.type, text=msg.text))
-
-        def _on_pageerror(exc) -> None:
-            page_errors.append(str(exc))
-
-        def _on_requestfailed(request) -> None:
-            failure = request.failure or ""
-            failed_requests.append(
-                FailedRequest(
-                    url=request.url,
-                    method=request.method,
-                    failure=failure or None,
-                )
-            )
-
-        def _on_response(response) -> None:
-            if response.status >= 400:
-                failed_requests.append(
-                    FailedRequest(
-                        url=response.url,
-                        method=response.request.method,
-                        status=response.status,
-                    )
-                )
-
-        page.on("console", _on_console)
-        page.on("pageerror", _on_pageerror)
-        page.on("requestfailed", _on_requestfailed)
-        page.on("response", _on_response)
-
         try:
-            for idx, step in enumerate(test.flow):
-                _execute_step(
-                    page,
-                    step,
-                    idx,
-                    out_dir,
+            for vp in viewports:
+                vp_out = out_dir / vp.name if tag_with_viewport else out_dir
+                vp_out.mkdir(parents=True, exist_ok=True)
+                _run_one_viewport(
+                    browser,
+                    test,
+                    vp,
+                    vp_out,
                     captures,
+                    console_errors,
+                    page_errors,
+                    failed_requests,
+                    tag_with_viewport=tag_with_viewport,
                     wait_until=wait_until,
                     timeout_ms=timeout_ms,
                 )
         finally:
-            context.close()
             browser.close()
 
     return RunResult(
@@ -115,6 +94,72 @@ def run_flow(
     )
 
 
+def _run_one_viewport(
+    browser,
+    test: Test,
+    vp: Viewport,
+    out_dir: Path,
+    captures: list[CaptureArtifact],
+    console_errors: list[ConsoleMessage],
+    page_errors: list[str],
+    failed_requests: list[FailedRequest],
+    *,
+    tag_with_viewport: bool,
+    wait_until: str,
+    timeout_ms: int,
+) -> None:
+    context = browser.new_context(viewport={"width": vp.width, "height": vp.height})
+    page = context.new_page()
+
+    def _on_console(msg) -> None:
+        if msg.type in _CONSOLE_LEVELS_TRACKED:
+            console_errors.append(ConsoleMessage(level=msg.type, text=msg.text))
+
+    def _on_pageerror(exc) -> None:
+        page_errors.append(str(exc))
+
+    def _on_requestfailed(request) -> None:
+        failure = request.failure or ""
+        failed_requests.append(
+            FailedRequest(
+                url=request.url,
+                method=request.method,
+                failure=failure or None,
+            )
+        )
+
+    def _on_response(response) -> None:
+        if response.status >= 400:
+            failed_requests.append(
+                FailedRequest(
+                    url=response.url,
+                    method=response.request.method,
+                    status=response.status,
+                )
+            )
+
+    page.on("console", _on_console)
+    page.on("pageerror", _on_pageerror)
+    page.on("requestfailed", _on_requestfailed)
+    page.on("response", _on_response)
+
+    viewport_tag = vp.name if tag_with_viewport else None
+    try:
+        for idx, step in enumerate(test.flow):
+            _execute_step(
+                page,
+                step,
+                idx,
+                out_dir,
+                captures,
+                viewport_tag=viewport_tag,
+                wait_until=wait_until,
+                timeout_ms=timeout_ms,
+            )
+    finally:
+        context.close()
+
+
 def _execute_step(
     page,
     step: FlowStep,
@@ -122,6 +167,7 @@ def _execute_step(
     out_dir: Path,
     captures: list[CaptureArtifact],
     *,
+    viewport_tag: str | None,
     wait_until: str,
     timeout_ms: int,
 ) -> None:
@@ -163,6 +209,7 @@ def _execute_step(
                 step_index=idx,
                 screenshot_path=str(path),
                 masks=masks,
+                viewport=viewport_tag,
             )
         )
         return

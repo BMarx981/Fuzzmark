@@ -15,6 +15,7 @@ from .models import (
     FlowStep,
     RunResult,
     Test,
+    Viewport,
 )
 from .runner import run_flow
 
@@ -26,6 +27,7 @@ __all__ = [
     "FlowStep",
     "RunResult",
     "CaptureArtifact",
+    "Viewport",
     "STEP_KINDS",
     "INTERACT_ACTIONS",
     "VISIT",

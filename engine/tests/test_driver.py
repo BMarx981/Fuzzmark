@@ -20,6 +20,7 @@ from fuzzmark.driver import (
     VISIT,
     FlowStep,
     Test,
+    Viewport,
     load_test,
     parse_test,
 )
@@ -309,3 +310,64 @@ class TestEnvelope:
             ],
         )
         assert parse_test(test.to_dict()).to_dict() == test.to_dict()
+
+
+class TestViewports:
+    def _with_viewports(self, viewports: list[dict]) -> dict:
+        raw = _minimal_valid()
+        raw["viewports"] = viewports
+        return raw
+
+    def test_omitted_yields_empty_tuple(self) -> None:
+        assert parse_test(_minimal_valid()).viewports == ()
+
+    def test_to_dict_omits_viewports_when_empty(self) -> None:
+        out = parse_test(_minimal_valid()).to_dict()
+        assert "viewports" not in out
+
+    def test_round_trip_with_viewports(self) -> None:
+        raw = self._with_viewports(
+            [
+                {"name": "desktop", "width": 1280, "height": 800},
+                {"name": "mobile", "width": 390, "height": 844},
+            ]
+        )
+        test = parse_test(raw)
+        assert test.viewports == (
+            Viewport(name="desktop", width=1280, height=800),
+            Viewport(name="mobile", width=390, height=844),
+        )
+        assert parse_test(test.to_dict()).to_dict() == test.to_dict()
+
+    def test_empty_list_rejected(self) -> None:
+        with pytest.raises(ValueError, match="viewports"):
+            parse_test(self._with_viewports([]))
+
+    def test_duplicate_names_rejected(self) -> None:
+        raw = self._with_viewports(
+            [
+                {"name": "x", "width": 100, "height": 100},
+                {"name": "x", "width": 200, "height": 200},
+            ]
+        )
+        with pytest.raises(ValueError, match="unique"):
+            parse_test(raw)
+
+    def test_positive_dimensions_required(self) -> None:
+        raw = self._with_viewports([{"name": "x", "width": 0, "height": 100}])
+        with pytest.raises(ValueError, match="positive"):
+            parse_test(raw)
+
+    def test_name_must_match_identifier(self) -> None:
+        raw = self._with_viewports(
+            [{"name": "bad/name", "width": 100, "height": 100}]
+        )
+        with pytest.raises(ValueError, match="name"):
+            parse_test(raw)
+
+    def test_dimensions_must_be_integers(self) -> None:
+        raw = self._with_viewports(
+            [{"name": "x", "width": "wide", "height": 100}]
+        )
+        with pytest.raises(ValueError, match="integers"):
+            parse_test(raw)
