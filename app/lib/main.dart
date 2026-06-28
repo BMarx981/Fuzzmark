@@ -52,7 +52,11 @@ class _FuzzmarkAppState extends State<FuzzmarkApp> {
               recents: widget.recents,
               onOpen: _openProject,
             )
-          : ProjectScreen(project: _open!, onClose: _closeProject),
+          : ProjectScreen(
+              api: _api,
+              project: _open!,
+              onClose: _closeProject,
+            ),
     );
   }
 }

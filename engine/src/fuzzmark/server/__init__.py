@@ -1,10 +1,10 @@
 """Local HTTP API exposing the engine to the Flutter desktop frontend.
 
-Stdlib-only — kept browser-free and dependency-free so it can be imported and
-exercised in pure-Python tests. The Flutter app talks to it over HTTP on
-127.0.0.1 by default. Long-running operations (scan, run) will land later
-with a WebSocket progress channel; this first slice only exposes the
-synchronous project endpoints needed by the Projects/home screen.
+The transport (`app.py`) is stdlib-only; the routes pull in `scanner.crawl`
+when a scan is requested, which is the one path that needs Playwright at
+runtime — every other route stays browser-free. The Flutter app talks to
+this server over HTTP on 127.0.0.1 by default. A WebSocket progress
+channel for long-running runs will land alongside the Run view.
 """
 
 from .app import make_server, serve_forever

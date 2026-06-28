@@ -26,6 +26,11 @@ class FuzzmarkProject {
   final String baseUrl;
   final Map<String, dynamic> raw;
 
+  String? get scan {
+    final v = raw['scan'];
+    return v is String ? v : null;
+  }
+
   factory FuzzmarkProject.fromJson(Map<String, dynamic> json) =>
       FuzzmarkProject(
         path: json['path'] as String,
@@ -33,6 +38,95 @@ class FuzzmarkProject {
         baseUrl: json['base_url'] as String,
         raw: json,
       );
+}
+
+class CrawlBoundsRequest {
+  const CrawlBoundsRequest({
+    this.maxDepth = 3,
+    this.maxPages = 50,
+    this.ignoreRobots = false,
+    this.allowCrossOrigin = false,
+    this.rateLimit = 0.0,
+    this.headed = false,
+  });
+
+  final int maxDepth;
+  final int maxPages;
+  final bool ignoreRobots;
+  final bool allowCrossOrigin;
+  final double rateLimit;
+  final bool headed;
+
+  Map<String, dynamic> toJson() => {
+        'max_depth': maxDepth,
+        'max_pages': maxPages,
+        'ignore_robots': ignoreRobots,
+        'allow_cross_origin': allowCrossOrigin,
+        'rate_limit': rateLimit,
+        'headed': headed,
+      };
+}
+
+class ScannedPage {
+  ScannedPage({
+    required this.url,
+    required this.depth,
+    required this.title,
+    required this.error,
+  });
+
+  final String url;
+  final int depth;
+  final String? title;
+  final String? error;
+
+  factory ScannedPage.fromJson(Map<String, dynamic> json) => ScannedPage(
+        url: json['url'] as String,
+        depth: (json['depth'] as num).toInt(),
+        title: json['title'] as String?,
+        error: json['error'] as String?,
+      );
+}
+
+class ScannedSkip {
+  ScannedSkip({required this.url, required this.reason});
+
+  final String url;
+  final String reason;
+
+  factory ScannedSkip.fromJson(Map<String, dynamic> json) => ScannedSkip(
+        url: json['url'] as String,
+        reason: json['reason'] as String,
+      );
+}
+
+class ScanResult {
+  ScanResult({
+    required this.baseUrl,
+    required this.pages,
+    required this.skipped,
+    required this.raw,
+  });
+
+  final String baseUrl;
+  final List<ScannedPage> pages;
+  final List<ScannedSkip> skipped;
+  final Map<String, dynamic> raw;
+
+  factory ScanResult.fromJson(Map<String, dynamic> json) {
+    final pages = (json['pages'] as List? ?? [])
+        .map((p) => ScannedPage.fromJson(p as Map<String, dynamic>))
+        .toList();
+    final skipped = (json['skipped'] as List? ?? [])
+        .map((s) => ScannedSkip.fromJson(s as Map<String, dynamic>))
+        .toList();
+    return ScanResult(
+      baseUrl: json['base_url'] as String,
+      pages: pages,
+      skipped: skipped,
+      raw: json,
+    );
+  }
 }
 
 class FuzzmarkApi {
@@ -52,6 +146,31 @@ class FuzzmarkApi {
 
   Future<FuzzmarkProject> loadProject(String path) async {
     final res = await _post('/api/projects/load', {'path': path});
+    return FuzzmarkProject.fromJson(res);
+  }
+
+  Future<ScanResult> runScan({
+    required String projectPath,
+    CrawlBoundsRequest bounds = const CrawlBoundsRequest(),
+  }) async {
+    final res = await _post('/api/projects/scan', {
+      'path': projectPath,
+      ...bounds.toJson(),
+    });
+    final siteMap = res['site_map'] as Map<String, dynamic>;
+    return ScanResult.fromJson(siteMap);
+  }
+
+  Future<FuzzmarkProject> saveScan({
+    required String projectPath,
+    required Map<String, dynamic> siteMap,
+    String? filename,
+  }) async {
+    final res = await _post('/api/projects/scan/save', {
+      'path': projectPath,
+      'site_map': siteMap,
+      'filename': ?filename,
+    });
     return FuzzmarkProject.fromJson(res);
   }
 

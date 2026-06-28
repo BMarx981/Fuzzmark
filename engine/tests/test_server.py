@@ -15,7 +15,9 @@ from pathlib import Path
 
 import pytest
 
+from fuzzmark.scanner import CrawlBounds, Page, SiteMap, SkippedUrl
 from fuzzmark.server import RouteError, dispatch, make_server
+from fuzzmark.server import routes as server_routes
 from fuzzmark.server.app import bound_address
 
 
@@ -99,6 +101,173 @@ class TestDispatch:
                     "base_url": "http://x/",
                     "viewports": [{"name": "", "width": 1, "height": 1}],
                 },
+            )
+        assert excinfo.value.status == 400
+
+
+class TestScanRoutes:
+    def _init_project(self, tmp_path: Path) -> str:
+        path = str(tmp_path / "project.json")
+        dispatch(
+            "POST",
+            "/api/projects/init",
+            {"path": path, "name": "demo", "base_url": "http://example.test/"},
+        )
+        return path
+
+    def _stub_crawl(self, captured: dict) -> object:
+        def fake(base_url, bounds, *, headless=True, session=None):
+            captured["base_url"] = base_url
+            captured["bounds"] = bounds
+            captured["headless"] = headless
+            captured["session"] = session
+            return SiteMap(
+                base_url=base_url,
+                bounds=bounds,
+                pages=[
+                    Page(url=base_url, depth=0, parent_url=None, title="Home"),
+                    Page(
+                        url=base_url + "about",
+                        depth=1,
+                        parent_url=base_url,
+                        title="About",
+                    ),
+                ],
+                skipped=[
+                    SkippedUrl(
+                        url=base_url + "logout",
+                        reason="exclude:logout",
+                        parent_url=base_url,
+                    )
+                ],
+            )
+
+        return fake
+
+    def test_scan_uses_project_base_url_and_bounds(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = self._init_project(tmp_path)
+        captured: dict = {}
+        monkeypatch.setattr(server_routes, "_crawl", self._stub_crawl(captured))
+
+        body = dispatch(
+            "POST",
+            "/api/projects/scan",
+            {
+                "path": path,
+                "max_depth": 1,
+                "max_pages": 5,
+                "ignore_robots": True,
+                "allow_cross_origin": True,
+                "rate_limit": 0.25,
+            },
+        )
+
+        assert captured["base_url"] == "http://example.test/"
+        bounds = captured["bounds"]
+        assert isinstance(bounds, CrawlBounds)
+        assert bounds.max_depth == 1
+        assert bounds.max_pages == 5
+        assert bounds.respect_robots is False
+        assert bounds.same_origin is False
+        assert bounds.rate_limit_seconds == 0.25
+        assert captured["headless"] is True
+        assert captured["session"] is None
+
+        site_map = body["site_map"]
+        assert site_map["page_count"] == 2
+        assert site_map["skipped_count"] == 1
+        assert [p["url"] for p in site_map["pages"]] == [
+            "http://example.test/",
+            "http://example.test/about",
+        ]
+
+    def test_scan_requires_project(self, tmp_path: Path) -> None:
+        with pytest.raises(RouteError) as excinfo:
+            dispatch(
+                "POST",
+                "/api/projects/scan",
+                {"path": str(tmp_path / "missing.json")},
+            )
+        assert excinfo.value.status == 400
+
+    def test_scan_rejects_bad_bounds(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = self._init_project(tmp_path)
+        called: dict = {"n": 0}
+
+        def fail_if_called(*_a, **_kw):
+            called["n"] += 1
+            raise AssertionError("crawl should not run when bounds are invalid")
+
+        monkeypatch.setattr(server_routes, "_crawl", fail_if_called)
+        with pytest.raises(RouteError) as excinfo:
+            dispatch(
+                "POST",
+                "/api/projects/scan",
+                {"path": path, "max_pages": 0},
+            )
+        assert excinfo.value.status == 400
+        assert called["n"] == 0
+
+    def test_scan_save_writes_file_and_updates_project(
+        self, tmp_path: Path
+    ) -> None:
+        path = self._init_project(tmp_path)
+        site_map = {
+            "base_url": "http://example.test/",
+            "bounds": {},
+            "page_count": 1,
+            "skipped_count": 0,
+            "pages": [
+                {
+                    "url": "http://example.test/",
+                    "depth": 0,
+                    "parent_url": None,
+                    "title": "Home",
+                    "links": [],
+                    "error": None,
+                }
+            ],
+            "skipped": [],
+        }
+        body = dispatch(
+            "POST",
+            "/api/projects/scan/save",
+            {"path": path, "site_map": site_map},
+        )
+        assert body["scan"] == "scan.json"
+        assert body["resolved"]["scan"] == str(
+            (tmp_path / "scan.json").resolve()
+        )
+        on_disk = json.loads(
+            (tmp_path / "scan.json").read_text(encoding="utf-8")
+        )
+        assert on_disk == site_map
+        reloaded = dispatch("POST", "/api/projects/load", {"path": path})
+        assert reloaded["scan"] == "scan.json"
+
+    def test_scan_save_rejects_non_object_site_map(self, tmp_path: Path) -> None:
+        path = self._init_project(tmp_path)
+        with pytest.raises(RouteError) as excinfo:
+            dispatch(
+                "POST",
+                "/api/projects/scan/save",
+                {"path": path, "site_map": []},
+            )
+        assert excinfo.value.status == 400
+
+    def test_scan_save_rejects_path_segment_in_filename(
+        self, tmp_path: Path
+    ) -> None:
+        path = self._init_project(tmp_path)
+        with pytest.raises(RouteError) as excinfo:
+            dispatch(
+                "POST",
+                "/api/projects/scan/save",
+                {"path": path, "site_map": {}, "filename": "nested/scan.json"},
             )
         assert excinfo.value.status == 400
 
