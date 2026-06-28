@@ -16,6 +16,7 @@ from .extractor import extract_fields, extract_site
 from .project import Project, ProjectError, ProjectViewport, init_project, load_project
 from .report import render_report
 from .scanner import CrawlBounds, crawl
+from .server import serve_forever
 from .sessions import SessionError, capture_session, validate_session
 from .suggestions import load_custom_tables, merge_tables, suggest, suggest_site
 
@@ -189,6 +190,10 @@ def _resolve_baselines_arg(
     if project is not None and project.baselines_resolved is not None:
         return str(project.baselines_resolved)
     return None
+
+
+def _cmd_serve(args: argparse.Namespace) -> None:
+    serve_forever(host=args.host, port=args.port)
 
 
 def _cmd_session(args: argparse.Namespace) -> None:
@@ -660,6 +665,18 @@ def main(argv: list[str] | None = None) -> None:
         help="Run headless (use only when --wait-for-url is automatable; default is headed for interactive login)",
     )
     session_p.set_defaults(func=_cmd_session)
+
+    serve_p = sub.add_parser(
+        "serve",
+        help="Run the local HTTP API on 127.0.0.1 so the desktop frontend can talk to the engine",
+    )
+    serve_p.add_argument(
+        "--host", default="127.0.0.1", help="Bind host (default 127.0.0.1)"
+    )
+    serve_p.add_argument(
+        "--port", type=int, default=8765, help="Bind port (default 8765)"
+    )
+    serve_p.set_defaults(func=_cmd_serve)
 
     compare = sub.add_parser(
         "compare",
