@@ -19,3 +19,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "browser: requires a running Chromium; skipped unless --run-browser is passed",
+]

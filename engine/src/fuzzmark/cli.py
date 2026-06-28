@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 
+from .capture import capture_page
 from .extractor import extract_fields
 from .suggestions import suggest
 
@@ -45,6 +46,18 @@ def _cmd_suggest(args: argparse.Namespace) -> None:
     sys.stdout.write("\n")
 
 
+def _cmd_capture(args: argparse.Namespace) -> None:
+    result = capture_page(
+        args.url,
+        args.output,
+        viewport=(args.width, args.height),
+        full_page=not args.viewport_only,
+        headless=not args.headed,
+    )
+    json.dump(result.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
+    sys.stdout.write("\n")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="fuzzmark", description="Scan-first QA engine")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -60,6 +73,21 @@ def main(argv: list[str] | None = None) -> None:
     suggest_p.add_argument("url")
     suggest_p.add_argument("--headed", action="store_true", help="Run the browser headed")
     suggest_p.set_defaults(func=_cmd_suggest)
+
+    capture = sub.add_parser(
+        "capture", help="Load a page and write a screenshot plus error-signal JSON"
+    )
+    capture.add_argument("url")
+    capture.add_argument("output", help="Path to write the PNG screenshot to")
+    capture.add_argument("--width", type=int, default=1280, help="Viewport width (px)")
+    capture.add_argument("--height", type=int, default=800, help="Viewport height (px)")
+    capture.add_argument(
+        "--viewport-only",
+        action="store_true",
+        help="Capture only the visible viewport instead of the full page",
+    )
+    capture.add_argument("--headed", action="store_true", help="Run the browser headed")
+    capture.set_defaults(func=_cmd_capture)
 
     args = parser.parse_args(argv)
     args.func(args)
