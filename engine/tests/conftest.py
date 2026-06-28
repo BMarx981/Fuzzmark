@@ -60,3 +60,10 @@ def fixture_ctas_url() -> str:
     path = Path(__file__).resolve().parents[1] / "fixtures" / "ctas.html"
     assert path.exists(), f"fixture missing: {path}"
     return path.as_uri()
+
+
+@pytest.fixture(scope="session")
+def fixture_wizard_url() -> str:
+    path = Path(__file__).resolve().parents[1] / "fixtures" / "wizard.html"
+    assert path.exists(), f"fixture missing: {path}"
+    return path.as_uri()

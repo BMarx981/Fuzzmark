@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Multi-step Wizard Fixture</title>
+  <style>
+    body { margin: 0; padding: 32px; background: #f9fafb;
+           font: 15px -apple-system, system-ui, sans-serif; color: #111; }
+    section { max-width: 560px; margin: 0 auto 24px; background: white;
+              padding: 18px 22px; border-radius: 8px;
+              box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
+    button { padding: 6px 12px; font: inherit; border: 1px solid #d1d5db;
+             border-radius: 4px; background: #f3f4f6; cursor: pointer; }
+    label { display: block; font-weight: 600; margin-top: 12px; }
+    input { display: block; width: 100%; padding: 6px 8px;
+            border: 1px solid #d1d5db; border-radius: 4px;
+            box-sizing: border-box; margin-top: 4px; }
+  </style>
+</head>
+<body>
+
+  <section>
+    <h2>Always visible</h2>
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" required>
+  </section>
+
+  <section>
+    <h2>Three-step wizard with a stable "Next" button</h2>
+    <div id="wizard-body"></div>
+    <button id="wizard-next" type="button">Next</button>
+  </section>
+
+  <template id="step-1-fields">
+    <label for="firstname">First name</label>
+    <input id="firstname" name="firstname" type="text" maxlength="40">
+  </template>
+
+  <template id="step-2-fields">
+    <label for="address">Address</label>
+    <input id="address" name="address" type="text" maxlength="120">
+  </template>
+
+  <template id="step-3-fields">
+    <label for="cardnumber">Card number</label>
+    <input id="cardnumber" name="cardnumber" type="text" pattern="[0-9]{16}">
+  </template>
+
+  <script>
+    const steps = ['step-1-fields', 'step-2-fields', 'step-3-fields'];
+    let cursor = 0;
+    const body = document.getElementById('wizard-body');
+    const next = document.getElementById('wizard-next');
+
+    const mountStep = (tmplId) => {
+      const tmpl = document.getElementById(tmplId);
+      if (!tmpl || !body) return;
+      while (body.firstChild) body.removeChild(body.firstChild);
+      body.appendChild(tmpl.content.cloneNode(true));
+    };
+
+    mountStep(steps[0]);
+
+    if (next) {
+      next.addEventListener('click', () => {
+        cursor = Math.min(cursor + 1, steps.length - 1);
+        mountStep(steps[cursor]);
+        if (cursor === steps.length - 1) next.disabled = true;
+      });
+    }
+  </script>
+</body>
+</html>

@@ -12,12 +12,14 @@ Passing `reveal=N` runs an active discovery pass after the passive walk:
 up to `N` clicks of reveal-triggers in document order, re-extracting and
 merging any newly-mounted fields. Trigger predicates, in priority order:
 `aria-expanded="false"` controls, closed `<details>` summaries,
-`aria-haspopup` dialog/menu openers, and a narrow allowlist of
-reveal-verb buttons ("Add another", "Show more", "More options", …).
-Submit buttons are excluded. Bounded by `N` and idempotent: each trigger
-is clicked at most once per call (tracked by a stable signature), so two
-invocations with the same `reveal=N` yield the same field set on the
-same page.
+`aria-haspopup` dialog/menu openers, a narrow allowlist of reveal-verb
+buttons ("Add another", "Show more", "More options", …), and wizard
+advance buttons ("Next", "Continue", "Step 2", …). Submit buttons are
+excluded. Bounded by `N` and idempotent: disclosure-style triggers are
+clicked at most once per call (tracked by a stable signature) and
+wizard-advance buttons are clicked at most once per iteration (the
+signature folds in the iteration index), so two invocations with the
+same `reveal=N` yield the same field set on the same page.
 """
 
 from __future__ import annotations
@@ -237,7 +239,7 @@ _EXTRACT_JS = r"""
 
 
 _REVEAL_CLICK_NEXT_JS = r"""
-(clicked) => {
+({clicked, iter}) => {
   const seen = new Set(clicked || []);
   const trim = (s) => (s || '').replace(/\s+/g, ' ').trim().slice(0, 64);
 
@@ -246,6 +248,11 @@ _REVEAL_CLICK_NEXT_JS = r"""
   // match. Keep this list narrow on purpose — false positives here would
   // fire arbitrary buttons during a scan.
   const TEXT_REVEAL_RE = /^(add (another|more|new|item|field|row|step|line)|show (more|all|fields|optional)|more (options|fields|details)|see more|reveal more)\b/i;
+
+  // Wizard advance buttons. Same button text typically persists across
+  // steps, so the signature folds in the iteration index — letting one
+  // "Next" element fire once per pass while the reveal budget allows.
+  const ADVANCE_RE = /^(next|continue|step \d+|go to step \d+)\b/i;
 
   const isSubmit = (el) => {
     const t = (el.getAttribute('type') || '').toLowerCase();
@@ -282,14 +289,20 @@ _REVEAL_CLICK_NEXT_JS = r"""
   });
 
   // 4. Text-pattern triggers — narrow allowlist; skips submits and anything
-  // already covered by aria-expanded.
+  // already covered by aria-expanded. Wizard-advance buttons get an
+  // iter-aware signature so a stable "Next" can fire on each iteration.
   document.querySelectorAll('button, [role="button"]').forEach((el) => {
     if (isSubmit(el)) return;
     if (el.hasAttribute('aria-expanded')) return;
     if (el.hasAttribute('aria-haspopup')) return;
+    if (el.disabled) return;
+    if ((el.getAttribute('aria-disabled') || '').toLowerCase() === 'true') return;
     const txt = trim(el.textContent);
-    if (!TEXT_REVEAL_RE.test(txt)) return;
-    cands.push({ el: el, sig: 'txt|' + (el.id || '') + '|' + txt });
+    if (ADVANCE_RE.test(txt)) {
+      cands.push({ el: el, sig: 'adv|' + (el.id || '') + '|' + txt + '|' + iter });
+    } else if (TEXT_REVEAL_RE.test(txt)) {
+      cands.push({ el: el, sig: 'txt|' + (el.id || '') + '|' + txt });
+    }
   });
 
   for (const c of cands) {
@@ -335,10 +348,12 @@ def extract_fields(
     page is re-extracted, merging any new fields by selector. Trigger
     predicates, in priority order: `aria-expanded="false"` controls,
     closed `<details>` summaries, `aria-haspopup` dialog/menu openers,
-    and a narrow allowlist of reveal-verb buttons ("Add another",
-    "Show more", "More options", …). Submit buttons are excluded. Each
-    trigger is clicked at most once per call, so the pass is bounded and
-    idempotent.
+    a narrow allowlist of reveal-verb buttons ("Add another", "Show
+    more", "More options", …), and wizard advance buttons ("Next",
+    "Continue", "Step 2", …). Submit buttons are excluded. Disclosure
+    triggers are clicked at most once per call; wizard-advance buttons
+    fire at most once per iteration, so a 3-step wizard walks with
+    `reveal=2`. The pass remains bounded and idempotent.
     """
     from playwright.sync_api import sync_playwright
 
@@ -355,8 +370,11 @@ def extract_fields(
                 raw_fields = page.evaluate(_EXTRACT_JS)
                 if reveal > 0:
                     clicked: list[str] = []
-                    for _ in range(reveal):
-                        sig = page.evaluate(_REVEAL_CLICK_NEXT_JS, clicked)
+                    for i in range(reveal):
+                        sig = page.evaluate(
+                            _REVEAL_CLICK_NEXT_JS,
+                            {"clicked": clicked, "iter": i},
+                        )
                         if not sig:
                             break
                         clicked.append(sig)

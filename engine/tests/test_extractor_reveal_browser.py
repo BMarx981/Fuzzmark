@@ -85,3 +85,42 @@ def test_reveal_zero_matches_passive_default(fixture_components_reveal_url: str)
 def test_negative_reveal_raises() -> None:
     with pytest.raises(ValueError):
         extract_fields("about:blank", reveal=-1)
+
+
+def test_wizard_passive_only_sees_step_one(fixture_wizard_url: str) -> None:
+    fields = extract_fields(fixture_wizard_url)
+    assert set(_names(fields)) == {"email", "firstname"}
+
+
+def test_wizard_single_next_click_reveals_step_two(fixture_wizard_url: str) -> None:
+    fields = extract_fields(fixture_wizard_url, reveal=1)
+    names = set(_names(fields))
+    assert {"email", "firstname", "address"} <= names
+    assert "cardnumber" not in names
+
+
+def test_wizard_walks_all_steps(fixture_wizard_url: str) -> None:
+    fields = extract_fields(fixture_wizard_url, reveal=2)
+    assert set(_names(fields)) == {
+        "email",
+        "firstname",
+        "address",
+        "cardnumber",
+    }
+
+
+def test_wizard_reveal_is_idempotent(fixture_wizard_url: str) -> None:
+    first = extract_fields(fixture_wizard_url, reveal=4)
+    second = extract_fields(fixture_wizard_url, reveal=4)
+    assert [f.selector for f in first] == [f.selector for f in second]
+
+
+def test_wizard_advance_stops_when_disabled(fixture_wizard_url: str) -> None:
+    # The fixture disables Next once step 3 mounts, so extra budget is a no-op.
+    fields = extract_fields(fixture_wizard_url, reveal=8)
+    assert set(_names(fields)) == {
+        "email",
+        "firstname",
+        "address",
+        "cardnumber",
+    }
