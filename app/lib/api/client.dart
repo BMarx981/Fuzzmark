@@ -240,6 +240,30 @@ class ExtractedField {
       };
 }
 
+class ExtractedCta {
+  ExtractedCta({
+    required this.selector,
+    required this.kind,
+    required this.label,
+    required this.href,
+    required this.disabled,
+  });
+
+  final String selector;
+  final String kind;
+  final String? label;
+  final String? href;
+  final bool disabled;
+
+  factory ExtractedCta.fromJson(Map<String, dynamic> json) => ExtractedCta(
+        selector: json['selector'] as String,
+        kind: json['kind'] as String,
+        label: json['label'] as String?,
+        href: json['href'] as String?,
+        disabled: json['disabled'] == true,
+      );
+}
+
 class FieldSuggestion {
   FieldSuggestion({
     required this.category,
@@ -576,6 +600,19 @@ class FuzzmarkApi {
     });
     return (res['fields'] as List? ?? [])
         .map((f) => ExtractedField.fromJson(f as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<ExtractedCta>> extractCtas({
+    required String projectPath,
+    required String url,
+  }) async {
+    final res = await _post('/api/projects/ctas', {
+      'path': projectPath,
+      'url': url,
+    });
+    return (res['ctas'] as List? ?? [])
+        .map((c) => ExtractedCta.fromJson(c as Map<String, dynamic>))
         .toList();
   }
 

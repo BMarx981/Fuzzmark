@@ -15,7 +15,14 @@ from typing import Callable
 from ..baselines import ApprovalResult, apply_approval, plan_approval
 from ..compare import DEFAULT_THRESHOLD, MaskRegion
 from ..driver import RunResult, load_test, parse_test, run_flow as _real_run_flow
-from ..extractor import Field, Option, Validation, extract_fields as _real_extract_fields
+from ..extractor import (
+    CTA,
+    Field,
+    Option,
+    Validation,
+    extract_ctas as _real_extract_ctas,
+    extract_fields as _real_extract_fields,
+)
 from ..project import (
     Project,
     ProjectError,
@@ -57,6 +64,9 @@ _crawl: Callable[..., SiteMap] = _real_crawl
 """Injection seam: tests monkeypatch this to skip the browser."""
 
 _extract_fields: Callable[..., list] = _real_extract_fields
+"""Injection seam: tests monkeypatch this to skip the browser."""
+
+_extract_ctas: Callable[..., list[CTA]] = _real_extract_ctas
 """Injection seam: tests monkeypatch this to skip the browser."""
 
 _run_flow: Callable[..., RunResult] = _real_run_flow
@@ -210,6 +220,27 @@ def _projects_extract(payload: dict) -> dict:
     except Exception as exc:  # noqa: BLE001
         raise RouteError(500, f"extract failed: {exc}") from exc
     return {"url": url, "fields": [_field_to_dict(f) for f in fields]}
+
+
+def _projects_ctas(payload: dict) -> dict:
+    """Extract clickable CTAs (buttons + link CTAs) from a page URL.
+
+    Mirrors `_projects_extract`: drives the browser-backed CTA walker under
+    the project's saved session when present. The injection seam is
+    `_extract_ctas`; tests stub it to skip Playwright entirely.
+    """
+    path = _require_str(payload, "path")
+    url = _require_str(payload, "url")
+    project = _load_project(path)
+    session = project.session_resolved
+    try:
+        ctas = _extract_ctas(
+            url,
+            session=str(session) if session is not None else None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise RouteError(500, f"ctas failed: {exc}") from exc
+    return {"url": url, "ctas": [c.to_dict() for c in ctas]}
 
 
 def _projects_suggest(payload: dict) -> dict:
@@ -634,6 +665,7 @@ ROUTES: dict[tuple[str, str], Route] = {
     ("POST", "/api/projects/scan/save"): _projects_scan_save,
     ("POST", "/api/projects/pages"): _projects_pages,
     ("POST", "/api/projects/extract"): _projects_extract,
+    ("POST", "/api/projects/ctas"): _projects_ctas,
     ("POST", "/api/projects/suggest"): _projects_suggest,
     ("POST", "/api/projects/tests/save"): _projects_tests_save,
     ("POST", "/api/projects/tests/run"): _projects_tests_run,

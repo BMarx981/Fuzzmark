@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from fuzzmark.driver import CaptureArtifact, RunResult
-from fuzzmark.extractor import Field, Option, Validation
+from fuzzmark.extractor import CTA, Field, Option, Validation
 from fuzzmark.scanner import CrawlBounds, Page, SiteMap, SkippedUrl
 from fuzzmark.server import RouteError, dispatch, make_server
 from fuzzmark.server import routes as server_routes
@@ -383,6 +383,68 @@ class TestExtractRoute:
         assert f["selector"] == "#email"
         assert f["validation"]["required"] is True
         assert f["validation"]["maxlength"] == 64
+
+
+class TestCtasRoute:
+    def _init_project(self, tmp_path: Path) -> str:
+        path = str(tmp_path / "project.json")
+        dispatch(
+            "POST",
+            "/api/projects/init",
+            {"path": path, "name": "demo", "base_url": "http://x/"},
+        )
+        return path
+
+    def test_ctas_uses_session_and_returns_cta_dicts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = self._init_project(tmp_path)
+        captured: dict = {}
+
+        def fake_ctas(url, *, session=None):
+            captured["url"] = url
+            captured["session"] = session
+            return [
+                CTA(
+                    selector="#send",
+                    kind="button",
+                    label="Send",
+                    href=None,
+                    disabled=False,
+                ),
+                CTA(
+                    selector="a:nth-of-type(1)",
+                    kind="link",
+                    label="Cancel",
+                    href="/cancel",
+                    disabled=False,
+                ),
+            ]
+
+        monkeypatch.setattr(server_routes, "_extract_ctas", fake_ctas)
+        body = dispatch(
+            "POST",
+            "/api/projects/ctas",
+            {"path": path, "url": "http://x/form"},
+        )
+        assert captured["url"] == "http://x/form"
+        assert captured["session"] is None
+        assert body["url"] == "http://x/form"
+        assert len(body["ctas"]) == 2
+        first, second = body["ctas"]
+        assert first["selector"] == "#send"
+        assert first["kind"] == "button"
+        assert first["label"] == "Send"
+        assert first["disabled"] is False
+        assert second["kind"] == "link"
+        assert second["href"] == "/cancel"
+
+    def test_ctas_requires_url(self, tmp_path: Path) -> None:
+        path = self._init_project(tmp_path)
+        with pytest.raises(RouteError) as excinfo:
+            dispatch("POST", "/api/projects/ctas", {"path": path})
+        assert excinfo.value.status == 400
+        assert "url" in excinfo.value.message
 
 
 class TestSuggestRoute:

@@ -32,6 +32,9 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
   Map<String, List<FieldSuggestion>> _suggestions = const {};
   final Map<String, TextEditingController> _values = {};
 
+  List<ExtractedCta> _ctas = const [];
+  final Set<String> _selectedCtas = {};
+
   @override
   void initState() {
     super.initState();
@@ -70,6 +73,8 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
       _extracting = true;
       _fields = const [];
       _suggestions = const {};
+      _ctas = const [];
+      _selectedCtas.clear();
       _error = null;
       for (final c in _values.values) {
         c.dispose();
@@ -87,10 +92,15 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
               projectPath: widget.project.path,
               fields: fields,
             );
+      final ctas = await widget.api.extractCtas(
+        projectPath: widget.project.path,
+        url: page.url,
+      );
       if (!mounted) return;
       setState(() {
         _fields = fields;
         _suggestions = suggestions;
+        _ctas = ctas;
         for (final f in fields) {
           _values[f.selector] = TextEditingController();
         }
@@ -108,8 +118,8 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
     final page = _selectedPage;
     if (page == null) return;
     final filled = _filledFields();
-    if (filled.isEmpty) {
-      _showSnack('Fill at least one field before saving');
+    if (filled.isEmpty && _selectedCtas.isEmpty) {
+      _showSnack('Fill a field or pick a CTA to click before saving');
       return;
     }
     final draft = await showDialog<_SaveTestDraft>(
@@ -124,6 +134,9 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
         {'kind': 'visit', 'url': page.url},
         for (final entry in filled.entries)
           {'kind': 'fill', 'selector': entry.key, 'value': entry.value},
+        for (final cta in _ctas)
+          if (_selectedCtas.contains(cta.selector))
+            {'kind': 'interact', 'selector': cta.selector, 'action': 'click'},
         {'kind': 'capture', 'name': captureName},
       ],
     };
@@ -303,23 +316,128 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
         ),
       );
     }
-    if (_fields.isEmpty) {
+    if (_fields.isEmpty && _ctas.isEmpty) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Text(
-            'No interactive form fields found on this page.',
+            'No interactive form fields or CTAs found on this page.',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyMedium,
           ),
         ),
       );
     }
-    return ListView.separated(
+    final children = <Widget>[];
+    if (_fields.isNotEmpty) {
+      children.add(_sectionHeader(context, 'Fields'));
+      for (final f in _fields) {
+        children.add(const SizedBox(height: 12));
+        children.add(_fieldCard(f));
+      }
+    }
+    if (_ctas.isNotEmpty) {
+      if (children.isNotEmpty) children.add(const SizedBox(height: 20));
+      children.add(_sectionHeader(context, 'CTAs'));
+      for (final c in _ctas) {
+        children.add(const SizedBox(height: 8));
+        children.add(_ctaCard(c));
+      }
+    }
+    return ListView(
       padding: const EdgeInsets.all(16),
-      itemCount: _fields.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 12),
-      itemBuilder: (_, i) => _fieldCard(_fields[i]),
+      children: children,
+    );
+  }
+
+  Widget _sectionHeader(BuildContext context, String title) {
+    return Text(
+      title,
+      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+            letterSpacing: 0.5,
+          ),
+    );
+  }
+
+  Widget _ctaCard(ExtractedCta cta) {
+    final scheme = Theme.of(context).colorScheme;
+    final selected = _selectedCtas.contains(cta.selector);
+    final label = cta.label?.isNotEmpty == true ? cta.label! : cta.selector;
+    final kindChip = cta.kind == 'link' ? 'link' : 'button';
+    return Card(
+      margin: EdgeInsets.zero,
+      child: InkWell(
+        onTap: cta.disabled || _saving
+            ? null
+            : () => setState(() {
+                  if (selected) {
+                    _selectedCtas.remove(cta.selector);
+                  } else {
+                    _selectedCtas.add(cta.selector);
+                  }
+                }),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Checkbox(
+                value: selected,
+                onChanged: cta.disabled || _saving
+                    ? null
+                    : (v) => setState(() {
+                          if (v == true) {
+                            _selectedCtas.add(cta.selector);
+                          } else {
+                            _selectedCtas.remove(cta.selector);
+                          }
+                        }),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            label,
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                        ),
+                        Text(
+                          cta.disabled ? '$kindChip · disabled' : kindChip,
+                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                              ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      cta.selector,
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                    ),
+                    if (cta.href != null && cta.href!.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        cta.href!,
+                        style: TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 11,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -416,6 +534,14 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
 
   Widget _footer(BuildContext context) {
     final filledCount = _filledFields().length;
+    final ctaCount = _selectedCtas.length;
+    final canSave = filledCount > 0 || ctaCount > 0;
+    final summary = _selectedPage == null
+        ? 'Pick a page to begin.'
+        : _ctas.isEmpty
+            ? '$filledCount of ${_fields.length} fields filled'
+            : '$filledCount of ${_fields.length} fields · '
+                '$ctaCount of ${_ctas.length} CTAs';
     return Container(
       decoration: BoxDecoration(
         border: Border(
@@ -426,14 +552,12 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
       child: Row(
         children: [
           Text(
-            _selectedPage == null
-                ? 'Pick a page to begin.'
-                : '$filledCount of ${_fields.length} fields filled',
+            summary,
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const Spacer(),
           FilledButton.icon(
-            onPressed: _saving || filledCount == 0 ? null : _saveTest,
+            onPressed: _saving || !canSave ? null : _saveTest,
             icon: const Icon(Icons.save),
             label: const Text('Save test'),
           ),
