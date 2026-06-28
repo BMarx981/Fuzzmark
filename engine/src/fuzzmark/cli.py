@@ -10,6 +10,7 @@ from .capture import capture_page
 from .compare import DEFAULT_THRESHOLD, compare_images
 from .driver import load_test, run_flow
 from .extractor import extract_fields
+from .report import render_report
 from .suggestions import suggest
 
 
@@ -72,6 +73,18 @@ def _cmd_run(args: argparse.Namespace) -> None:
     sys.stdout.write("\n")
 
 
+def _cmd_report(args: argparse.Namespace) -> None:
+    data = json.loads(open(args.result, encoding="utf-8").read())
+    report = render_report(
+        data,
+        args.out,
+        baselines_dir=args.baselines,
+        threshold=args.threshold,
+    )
+    json.dump(report.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
+    sys.stdout.write("\n")
+
+
 def _cmd_compare(args: argparse.Namespace) -> None:
     result = compare_images(
         args.baseline,
@@ -124,6 +137,27 @@ def main(argv: list[str] | None = None) -> None:
     run_p.add_argument("--height", type=int, default=800, help="Viewport height (px)")
     run_p.add_argument("--headed", action="store_true", help="Run the browser headed")
     run_p.set_defaults(func=_cmd_run)
+
+    report_p = sub.add_parser(
+        "report",
+        help="Render a static HTML report from a run-result JSON and optional baselines",
+    )
+    report_p.add_argument("result", help="Path to a result JSON produced by `fuzzmark run`")
+    report_p.add_argument(
+        "--out", required=True, help="Directory to write the HTML report into"
+    )
+    report_p.add_argument(
+        "--baselines",
+        default=None,
+        help="Optional directory of approved baseline PNGs keyed by capture name",
+    )
+    report_p.add_argument(
+        "--threshold",
+        type=float,
+        default=DEFAULT_THRESHOLD,
+        help=f"SSIM threshold for a pass verdict (default {DEFAULT_THRESHOLD})",
+    )
+    report_p.set_defaults(func=_cmd_report)
 
     compare = sub.add_parser(
         "compare",
