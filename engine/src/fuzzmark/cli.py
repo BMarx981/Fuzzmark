@@ -12,7 +12,7 @@ from .baselines import apply_approval, plan_approval
 from .capture import capture_page
 from .compare import DEFAULT_THRESHOLD, MaskRegion, compare_images, parse_mask_spec
 from .driver import load_test, run_flow
-from .extractor import extract_fields, extract_site
+from .extractor import extract_ctas, extract_fields, extract_site
 from .project import Project, ProjectError, ProjectViewport, init_project, load_project
 from .report import render_report
 from .scanner import CrawlBounds, crawl
@@ -90,6 +90,22 @@ def _cmd_suggest(args: argparse.Namespace) -> None:
             "field_count": len(fields),
             "fields": items,
         }
+    json.dump(payload, sys.stdout, indent=2, ensure_ascii=False)
+    sys.stdout.write("\n")
+
+
+def _cmd_ctas(args: argparse.Namespace) -> None:
+    project = _load_project_arg(args)
+    session = _resolve_session_arg(args, project)
+    url = args.url or (project.base_url if project else None)
+    if not url:
+        raise SystemExit("ctas: pass a URL, or --project <project.json>")
+    ctas = extract_ctas(url, headless=not args.headed, session=session)
+    payload = {
+        "url": url,
+        "cta_count": len(ctas),
+        "ctas": [c.to_dict() for c in ctas],
+    }
     json.dump(payload, sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
 
@@ -417,6 +433,25 @@ def main(argv: list[str] | None = None) -> None:
     )
     _add_project_arg(extract)
     extract.set_defaults(func=_cmd_extract)
+
+    ctas = sub.add_parser(
+        "ctas",
+        help="Extract clickable CTAs (buttons + link-CTAs) from a page",
+    )
+    ctas.add_argument(
+        "url",
+        nargs="?",
+        help="Page URL; omit when using --project's base_url",
+    )
+    ctas.add_argument("--headed", action="store_true", help="Run the browser headed")
+    ctas.add_argument(
+        "--session",
+        default=None,
+        metavar="PATH",
+        help="Replay a Playwright storage_state JSON for authenticated extraction",
+    )
+    _add_project_arg(ctas)
+    ctas.set_defaults(func=_cmd_ctas)
 
     suggest_p = sub.add_parser(
         "suggest",

@@ -43,3 +43,23 @@ class Field:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass
+class CTA:
+    """A clickable call-to-action discovered on a page.
+
+    `kind` is `"button"` (native `<button>`, `<input type=submit|button>`, or
+    a `role="button"` element) or `"link"` (an `<a>` with an `href`).
+    `label` is the accessible name; `href` is set only for links. `disabled`
+    captures `[disabled]` or `aria-disabled="true"`.
+    """
+
+    selector: str
+    kind: str
+    label: Optional[str]
+    href: Optional[str] = None
+    disabled: bool = False
+
+    def to_dict(self) -> dict:
+        return asdict(self)
