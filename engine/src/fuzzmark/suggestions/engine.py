@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Mapping, Optional
+
 from ..extractor import Field
 from .models import (
     BOUNDARY,
@@ -72,11 +74,17 @@ def _select_suggestions(field: Field) -> list[Suggestion]:
     return out
 
 
-def suggest(field: Field) -> list[Suggestion]:
+def suggest(
+    field: Field,
+    tables: Optional[Mapping[str, tuple[Suggestion, ...]]] = None,
+) -> list[Suggestion]:
     """Return ordered, deduplicated suggestions for a single field.
 
-    The function is pure: same field in, same suggestions out, no I/O.
+    The function is pure: same field in, same suggestions out, no I/O. Pass
+    `tables` to override the built-in `TYPE_TABLES` map (e.g. with the result
+    of `suggestions.custom.merge_tables`).
     """
+    type_tables = tables if tables is not None else TYPE_TABLES
     suggestions: list[Suggestion] = []
     suggestions.extend(_empty_required(field))
 
@@ -86,7 +94,8 @@ def suggest(field: Field) -> list[Suggestion]:
         suggestions.extend(TEXTAREA_TABLE)
         suggestions.extend(_length_boundaries(field))
     else:
-        table = TYPE_TABLES.get(field.type or "text", TYPE_TABLES["text"])
+        key = field.type or "text"
+        table = type_tables.get(key) or type_tables.get("text", TYPE_TABLES["text"])
         suggestions.extend(table)
         if field.type in ("number", "range"):
             suggestions.extend(_numeric_boundaries(field))
@@ -96,14 +105,17 @@ def suggest(field: Field) -> list[Suggestion]:
     seen: set[tuple[str, str]] = set()
     deduped: list[Suggestion] = []
     for s in suggestions:
-        key = (s.category, s.value)
-        if key in seen:
+        dedup_key = (s.category, s.value)
+        if dedup_key in seen:
             continue
-        seen.add(key)
+        seen.add(dedup_key)
         deduped.append(s.with_field(field.selector))
     return deduped
 
 
-def suggest_all(fields: list[Field]) -> dict[str, list[Suggestion]]:
+def suggest_all(
+    fields: list[Field],
+    tables: Optional[Mapping[str, tuple[Suggestion, ...]]] = None,
+) -> dict[str, list[Suggestion]]:
     """Generate suggestions for every field, keyed by selector."""
-    return {f.selector: suggest(f) for f in fields}
+    return {f.selector: suggest(f, tables=tables) for f in fields}

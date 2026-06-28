@@ -13,7 +13,7 @@ from .driver import load_test, run_flow
 from .extractor import extract_fields, extract_site
 from .report import render_report
 from .scanner import CrawlBounds, crawl
-from .suggestions import suggest, suggest_site
+from .suggestions import load_custom_tables, merge_tables, suggest, suggest_site
 
 
 def _cmd_extract(args: argparse.Namespace) -> None:
@@ -35,18 +35,19 @@ def _cmd_extract(args: argparse.Namespace) -> None:
 
 
 def _cmd_suggest(args: argparse.Namespace) -> None:
+    tables = merge_tables(load_custom_tables(args.tables)) if args.tables else None
     if args.scan:
         site_map = json.loads(open(args.scan, encoding="utf-8").read())
         extractor = lambda url: extract_fields(url, headless=not args.headed)
         site = extract_site(site_map, extractor=extractor, include=args.include or None)
-        payload = suggest_site(site)
+        payload = suggest_site(site, tables=tables)
     else:
         if not args.url:
             raise SystemExit("suggest: pass a URL or --scan <site-map.json>")
         fields = extract_fields(args.url, headless=not args.headed)
         items = []
         for field in fields:
-            suggestions = suggest(field)
+            suggestions = suggest(field, tables=tables)
             items.append(
                 {
                     "selector": field.selector,
@@ -204,6 +205,12 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         metavar="URL",
         help="Restrict --scan extraction to this URL; repeatable",
+    )
+    suggest_p.add_argument(
+        "--tables",
+        default=None,
+        metavar="PATH",
+        help="Path to a JSON file of user-authored suggestion tables to merge with the built-ins",
     )
     suggest_p.add_argument("--headed", action="store_true", help="Run the browser headed")
     suggest_p.set_defaults(func=_cmd_suggest)

@@ -7,18 +7,24 @@ browser; the suggestion engine itself is rule-based and table-driven.
 
 from __future__ import annotations
 
+from typing import Mapping, Optional
+
 from ..extractor import Field, Option, Validation
 from .engine import suggest
+from .models import Suggestion
 
 
-def suggest_site(site_extract: dict) -> dict:
+def suggest_site(
+    site_extract: dict,
+    tables: Optional[Mapping[str, tuple[Suggestion, ...]]] = None,
+) -> dict:
     """Return a copy of `site_extract` with suggestions attached to every field."""
     out_pages: list[dict] = []
     for page in site_extract.get("pages", []):
         out_fields = []
         for raw in page.get("fields", []):
             field = _field_from_dict(raw)
-            sugs = suggest(field)
+            sugs = suggest(field, tables=tables)
             out_fields.append(
                 {
                     **raw,

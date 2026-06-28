@@ -1,5 +1,6 @@
 """Rule-based fuzzing-value generation keyed off field type and validation metadata."""
 
+from .custom import CustomTablesError, load_custom_tables, merge_tables
 from .engine import suggest, suggest_all
 from .site import suggest_site
 from .models import (
@@ -27,4 +28,7 @@ __all__ = [
     "SECURITY",
     "I18N",
     "TYPE_SPECIFIC",
+    "load_custom_tables",
+    "merge_tables",
+    "CustomTablesError",
 ]
