@@ -88,7 +88,7 @@ def suggest(field: Field) -> list[Suggestion]:
     else:
         table = TYPE_TABLES.get(field.type or "text", TYPE_TABLES["text"])
         suggestions.extend(table)
-        if field.type == "number":
+        if field.type in ("number", "range"):
             suggestions.extend(_numeric_boundaries(field))
         else:
             suggestions.extend(_length_boundaries(field))
