@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Component Coverage Fixture</title>
+  <style>
+    body { margin: 0; padding: 32px; background: #f9fafb;
+           font: 15px -apple-system, system-ui, sans-serif; color: #111; }
+    section { max-width: 560px; margin: 0 auto 28px; background: white;
+              padding: 20px 24px; border-radius: 8px;
+              box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
+    h2 { margin: 0 0 12px; font-size: 16px; }
+    .field { margin-bottom: 14px; }
+    .label { display: block; font-weight: 600; margin-bottom: 4px; }
+    .box { padding: 8px 10px; border: 1px solid #d1d5db;
+           border-radius: 4px; min-height: 22px; background: white; }
+    .listbox { padding: 6px; border: 1px solid #d1d5db; border-radius: 4px; }
+    .listbox [role="option"] { padding: 4px 6px; border-radius: 3px; }
+    iframe { width: 100%; height: 220px; border: 1px solid #e5e7eb; border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+  <section>
+    <h2>ARIA widgets</h2>
+
+    <div class="field">
+      <span id="lbl-country" class="label">Country</span>
+      <div id="country" role="combobox"
+           aria-labelledby="lbl-country"
+           aria-controls="country-listbox"
+           aria-required="true"
+           class="box">Select…</div>
+      <ul id="country-listbox" role="listbox" class="listbox" hidden>
+        <li role="option" data-value="us">United States</li>
+        <li role="option" data-value="ca">Canada</li>
+        <li role="option" data-value="mx">Mexico</li>
+      </ul>
+    </div>
+
+    <div class="field">
+      <span class="label">Priority</span>
+      <ul id="priority" role="listbox" aria-label="Priority" class="listbox">
+        <li role="option" data-value="low">Low</li>
+        <li role="option" data-value="med">Medium</li>
+        <li role="option" data-value="high">High</li>
+      </ul>
+    </div>
+
+    <div class="field">
+      <span class="label">Display name</span>
+      <div id="displayname" role="textbox"
+           aria-label="Display name"
+           aria-required="true"
+           contenteditable="true" class="box"></div>
+    </div>
+
+    <div class="field">
+      <span class="label">Bio</span>
+      <div id="bio" role="textbox" aria-multiline="true"
+           aria-label="Bio"
+           contenteditable="true" class="box" style="min-height:60px"></div>
+    </div>
+
+    <div class="field">
+      <span class="label">Quantity</span>
+      <div id="qty" role="spinbutton"
+           aria-label="Quantity"
+           aria-valuemin="1" aria-valuemax="99" aria-valuenow="1"
+           tabindex="0" class="box">1</div>
+    </div>
+
+    <div class="field">
+      <div id="newsletter" role="checkbox"
+           aria-checked="false" aria-label="Subscribe to newsletter"
+           tabindex="0" class="box">Subscribe</div>
+    </div>
+
+    <div class="field">
+      <div id="notifications" role="switch"
+           aria-checked="true" aria-label="Notifications"
+           tabindex="0" class="box">On</div>
+    </div>
+
+    <div class="field" role="radiogroup" aria-label="Plan">
+      <span class="label">Plan</span>
+      <div id="plan-free" role="radio" aria-checked="true"
+           aria-label="Free plan" tabindex="0" class="box">Free</div>
+      <div id="plan-pro" role="radio" aria-checked="false"
+           aria-label="Pro plan" tabindex="0" class="box">Pro</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Contenteditable editor</h2>
+    <div class="field">
+      <span class="label">Notes</span>
+      <div id="notes" contenteditable="true" class="box"
+           aria-label="Notes" style="min-height:60px"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Shadow DOM</h2>
+    <my-input-card id="card1"></my-input-card>
+  </section>
+
+  <section>
+    <h2>Same-origin iframe</h2>
+    <iframe id="inner-frame" srcdoc='
+      <!doctype html><html><body style="font:14px sans-serif;padding:12px">
+        <form>
+          <label for="iemail">Iframe email</label>
+          <input id="iemail" name="iframe_email" type="email" required maxlength="80">
+          <label for="iname">Iframe name</label>
+          <input id="iname" name="iframe_name" type="text" minlength="2" maxlength="40">
+        </form>
+      </body></html>'></iframe>
+  </section>
+
+  <template id="my-input-card-tmpl">
+    <style>
+      .wrap { padding: 8px 10px; border: 1px dashed #94a3b8;
+              border-radius: 4px; background: #f8fafc; }
+      label { display: block; font-weight: 600; margin-bottom: 4px; }
+      input { display: block; width: 100%; padding: 6px 8px;
+              border: 1px solid #d1d5db; border-radius: 3px; }
+    </style>
+    <div class="wrap">
+      <label for="shadow-input">Shadow email</label>
+      <input id="shadow-input" name="shadow_email" type="email" required maxlength="60">
+    </div>
+  </template>
+
+  <script>
+    customElements.define('my-input-card', class extends HTMLElement {
+      constructor() {
+        super();
+        const root = this.attachShadow({ mode: 'open' });
+        const tmpl = document.getElementById('my-input-card-tmpl');
+        root.appendChild(tmpl.content.cloneNode(true));
+      }
+    });
+  </script>
+</body>
+</html>
