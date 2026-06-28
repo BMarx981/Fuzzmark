@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 from skimage.metrics import structural_similarity
 
+from .masks import MaskRegion, apply_masks
 from .result import CHANGE, PASS, CompareResult
 
 
@@ -47,6 +48,7 @@ def compare_images(
     *,
     threshold: float = DEFAULT_THRESHOLD,
     diff_path: str | Path | None = None,
+    masks: list[MaskRegion] | None = None,
 ) -> CompareResult:
     """Compare a candidate screenshot against a baseline using SSIM.
 
@@ -55,6 +57,9 @@ def compare_images(
         candidate_path: New capture under test.
         threshold: SSIM score at or above which the candidate is considered a pass.
         diff_path: Optional path to write a colormap heatmap visualizing the diff.
+        masks: Optional axis-aligned regions blanked on both images before
+            scoring. Use to exclude legitimately dynamic UI (clocks, ads,
+            carousels) per spec §5.7.
 
     Returns:
         A `CompareResult` carrying the score, threshold, verdict, and (if requested)
@@ -65,6 +70,10 @@ def compare_images(
 
     baseline = _load_bgr(baseline_path)
     candidate = _normalize_dims(baseline, _load_bgr(candidate_path))
+
+    if masks:
+        baseline = apply_masks(baseline, masks)
+        candidate = apply_masks(candidate, masks)
 
     score, ssim_map = structural_similarity(
         baseline, candidate, channel_axis=-1, full=True

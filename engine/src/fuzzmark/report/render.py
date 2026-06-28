@@ -13,7 +13,7 @@ import shutil
 from pathlib import Path
 from typing import Iterable
 
-from ..compare import DEFAULT_THRESHOLD, PASS, compare_images
+from ..compare import DEFAULT_THRESHOLD, PASS, MaskRegion, compare_images
 from .models import NO_BASELINE, Report, ReportEntry
 
 
@@ -27,6 +27,7 @@ def render_report(
     *,
     baselines_dir: str | Path | None = None,
     threshold: float = DEFAULT_THRESHOLD,
+    masks: dict[str, list[MaskRegion]] | None = None,
 ) -> Report:
     """Build the report directory and return the populated `Report` model.
 
@@ -39,14 +40,23 @@ def render_report(
             `<capture name>.png`. Captures without a matching baseline are
             recorded with the `no-baseline` verdict.
         threshold: SSIM threshold passed to the comparison engine.
+        masks: Optional map of capture name → list of `MaskRegion` blanked on
+            both baseline and capture before scoring.
     """
     out_dir = Path(output_dir)
     images_dir = out_dir / _IMAGES_SUBDIR
     images_dir.mkdir(parents=True, exist_ok=True)
 
     baselines = Path(baselines_dir) if baselines_dir is not None else None
+    masks_by_name = masks or {}
     entries = [
-        _build_entry(capture, images_dir, baselines, threshold)
+        _build_entry(
+            capture,
+            images_dir,
+            baselines,
+            threshold,
+            masks=masks_by_name.get(capture["name"]),
+        )
         for capture in run_result.get("captures", [])
     ]
 
@@ -70,6 +80,8 @@ def _build_entry(
     images_dir: Path,
     baselines_dir: Path | None,
     threshold: float,
+    *,
+    masks: list[MaskRegion] | None = None,
 ) -> ReportEntry:
     name = capture["name"]
     step_index = capture["step_index"]
@@ -92,7 +104,11 @@ def _build_entry(
     diff_dst = images_dir / f"{name}__diff.png"
     shutil.copyfile(baseline_src, baseline_dst)
     result = compare_images(
-        baseline_dst, capture_dst, threshold=threshold, diff_path=diff_dst
+        baseline_dst,
+        capture_dst,
+        threshold=threshold,
+        diff_path=diff_dst,
+        masks=masks,
     )
     return ReportEntry.from_compare(
         name=name, step_index=step_index, capture_path=str(capture_dst), result=result

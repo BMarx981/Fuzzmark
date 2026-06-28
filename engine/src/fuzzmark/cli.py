@@ -8,7 +8,7 @@ import sys
 
 from .baselines import apply_approval, plan_approval
 from .capture import capture_page
-from .compare import DEFAULT_THRESHOLD, compare_images
+from .compare import DEFAULT_THRESHOLD, MaskRegion, compare_images, parse_mask_spec
 from .driver import load_test, run_flow
 from .extractor import extract_fields
 from .report import render_report
@@ -77,14 +77,31 @@ def _cmd_run(args: argparse.Namespace) -> None:
 
 def _cmd_report(args: argparse.Namespace) -> None:
     data = json.loads(open(args.result, encoding="utf-8").read())
+    masks = _parse_named_masks(args.mask or [])
     report = render_report(
         data,
         args.out,
         baselines_dir=args.baselines,
         threshold=args.threshold,
+        masks=masks or None,
     )
     json.dump(report.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
+
+
+def _parse_named_masks(specs: list[str]) -> dict[str, list[MaskRegion]]:
+    out: dict[str, list[MaskRegion]] = {}
+    for spec in specs:
+        if ":" not in spec:
+            raise SystemExit(
+                f"--mask must be 'capture_name:x,y,w,h[,source]'; got {spec!r}"
+            )
+        name, rest = spec.split(":", 1)
+        name = name.strip()
+        if not name:
+            raise SystemExit(f"--mask missing capture name in {spec!r}")
+        out.setdefault(name, []).append(parse_mask_spec(rest))
+    return out
 
 
 def _cmd_approve(args: argparse.Namespace) -> None:
@@ -119,11 +136,13 @@ def _cmd_scan(args: argparse.Namespace) -> None:
 
 
 def _cmd_compare(args: argparse.Namespace) -> None:
+    masks = [parse_mask_spec(spec) for spec in (args.mask or [])]
     result = compare_images(
         args.baseline,
         args.candidate,
         threshold=args.threshold,
         diff_path=args.diff_out,
+        masks=masks or None,
     )
     json.dump(result.to_dict(), sys.stdout, indent=2)
     sys.stdout.write("\n")
@@ -189,6 +208,13 @@ def main(argv: list[str] | None = None) -> None:
         type=float,
         default=DEFAULT_THRESHOLD,
         help=f"SSIM threshold for a pass verdict (default {DEFAULT_THRESHOLD})",
+    )
+    report_p.add_argument(
+        "--mask",
+        action="append",
+        default=None,
+        metavar="CAPTURE_NAME:X,Y,W,H[,SOURCE]",
+        help="Per-capture region to blank before scoring; repeatable",
     )
     report_p.set_defaults(func=_cmd_report)
 
@@ -263,6 +289,13 @@ def main(argv: list[str] | None = None) -> None:
         "--diff-out",
         default=None,
         help="Optional path to write a heatmap PNG visualizing the diff",
+    )
+    compare.add_argument(
+        "--mask",
+        action="append",
+        default=None,
+        metavar="X,Y,W,H[,SOURCE]",
+        help="Region to blank on both images before scoring; repeatable",
     )
     compare.set_defaults(func=_cmd_compare)
 

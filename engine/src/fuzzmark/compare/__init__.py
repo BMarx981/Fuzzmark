@@ -5,6 +5,7 @@ tiers from spec §5.7 come later.
 """
 
 from .diff import DEFAULT_THRESHOLD, compare_images
+from .masks import MaskRegion, apply_masks, clamp_region, parse_mask_spec
 from .result import CHANGE, MVP_VERDICTS, PASS, CompareResult
 
 __all__ = [
@@ -14,4 +15,8 @@ __all__ = [
     "PASS",
     "CHANGE",
     "MVP_VERDICTS",
+    "MaskRegion",
+    "apply_masks",
+    "clamp_region",
+    "parse_mask_spec",
 ]

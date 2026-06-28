@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Feedback — Fuzzmark sample</title>
+  <style>
+    body { margin: 0; padding: 40px; background: #f3f4f6;
+           font: 16px -apple-system, system-ui, sans-serif; color: #1a1a1a; }
+    main { max-width: 520px; margin: 0 auto; background: white;
+           padding: 32px; border-radius: 8px;
+           box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    h1 { margin: 0 0 8px; font-size: 22px; }
+    p.lede { margin: 0 0 24px; color: #4b5563; }
+    label { display: block; font-weight: 600;
+            margin-top: 16px; margin-bottom: 4px; }
+    input, select, textarea { display: block; width: 100%;
+            padding: 8px 10px; border: 1px solid #d1d5db;
+            border-radius: 4px; font-size: 14px; box-sizing: border-box;
+            background: white; color: #1a1a1a; }
+    textarea { height: 90px; resize: vertical; }
+    .row { display: flex; gap: 12px; }
+    .row > * { flex: 1; }
+    button { display: block; margin-top: 24px; padding: 10px 24px;
+             background: #2563eb; color: white; border: none;
+             border-radius: 4px; font-size: 15px; cursor: pointer; }
+    .thanks { display: none; margin-top: 20px; padding: 16px;
+              background: #ecfdf5; border: 1px solid #34d399;
+              border-radius: 4px; color: #065f46; font-weight: 600; }
+    .thanks:target { display: block; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Send us feedback</h1>
+    <p class="lede">We read every note. Required fields are marked.</p>
+
+    <form action="#sent" method="get">
+      <label for="email">Email address *</label>
+      <input id="email" name="email" type="email" required maxlength="120">
+
+      <label for="name">Your name</label>
+      <input id="name" name="name" type="text" minlength="2" maxlength="80">
+
+      <div class="row">
+        <div>
+          <label for="phone">Phone</label>
+          <input id="phone" name="phone" type="tel" maxlength="20">
+        </div>
+        <div>
+          <label for="rating">Rating</label>
+          <input id="rating" name="rating" type="number" min="1" max="5" step="1">
+        </div>
+      </div>
+
+      <label for="topic">Topic *</label>
+      <select id="topic" name="topic" required>
+        <option value="">Choose one</option>
+        <option value="bug">Bug report</option>
+        <option value="idea">Feature idea</option>
+        <option value="praise">Praise</option>
+        <option value="other">Something else</option>
+      </select>
+
+      <label for="message">Message *</label>
+      <textarea id="message" name="message" required maxlength="500"
+                placeholder="What's on your mind?"></textarea>
+
+      <button type="submit">Send feedback</button>
+    </form>
+
+    <div id="sent" class="thanks">Thanks — your feedback is on its way.</div>
+  </main>
+</body>
+</html>

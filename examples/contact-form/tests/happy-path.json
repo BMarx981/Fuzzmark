@@ -1,0 +1,16 @@
+{
+  "name": "feedback-happy-path",
+  "flow": [
+    { "kind": "visit", "url": "http://localhost:8000/feedback.html" },
+    { "kind": "capture", "name": "blank-form" },
+    { "kind": "fill", "selector": "#email", "value": "ada@example.com" },
+    { "kind": "fill", "selector": "#name", "value": "Ada Lovelace" },
+    { "kind": "fill", "selector": "#phone", "value": "555-0142" },
+    { "kind": "fill", "selector": "#rating", "value": "5" },
+    { "kind": "interact", "selector": "#topic", "action": "select_option", "value": "praise" },
+    { "kind": "fill", "selector": "#message", "value": "Great tool — saved me an afternoon." },
+    { "kind": "capture", "name": "filled-form" },
+    { "kind": "submit", "selector": "button[type='submit']" },
+    { "kind": "capture", "name": "thank-you" }
+  ]
+}

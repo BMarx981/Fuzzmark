@@ -1,0 +1,11 @@
+{
+  "name": "feedback-missing-required",
+  "flow": [
+    { "kind": "visit", "url": "http://localhost:8000/feedback.html" },
+    { "kind": "fill", "selector": "#email", "value": "ada@example.com" },
+    { "kind": "fill", "selector": "#message", "value": "Submitting without choosing a topic." },
+    { "kind": "capture", "name": "filled-but-missing-topic" },
+    { "kind": "submit", "selector": "button[type='submit']" },
+    { "kind": "capture", "name": "after-blocked-submit" }
+  ]
+}
