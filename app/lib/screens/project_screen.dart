@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import 'run_screen.dart';
 import 'scan_screen.dart';
 import 'test_builder_screen.dart';
 
@@ -44,6 +45,19 @@ class _ProjectScreenState extends State<ProjectScreen> {
           project: _project,
           onClose: () => Navigator.of(context).pop(),
           onProjectUpdated: (p) => setState(() => _project = p),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openRun(String testPath) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RunScreen(
+          api: widget.api,
+          project: _project,
+          testPath: testPath,
+          onClose: () => Navigator.of(context).pop(),
         ),
       ),
     );
@@ -131,6 +145,12 @@ class _ProjectScreenState extends State<ProjectScreen> {
                               dense: true,
                               leading: const Icon(Icons.description_outlined),
                               title: Text(t, style: mono),
+                              trailing: IconButton(
+                                tooltip: 'Run test',
+                                icon: const Icon(Icons.play_arrow),
+                                onPressed: () => _openRun(t),
+                              ),
+                              onTap: () => _openRun(t),
                             ))
                         .toList(growable: false),
                   ),

@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from typing import Callable
 
-from ..driver import parse_test
+from ..driver import RunResult, load_test, parse_test, run_flow as _real_run_flow
 from ..extractor import Field, Option, Validation, extract_fields as _real_extract_fields
 from ..project import (
     Project,
@@ -36,6 +36,8 @@ from ..suggestions import (
 API_VERSION = "0.1.0"
 
 DEFAULT_SCAN_FILENAME = "scan.json"
+DEFAULT_RUNS_DIR = "runs"
+RUN_RESULT_FILENAME = "result.json"
 
 
 class RouteError(Exception):
@@ -51,6 +53,9 @@ _crawl: Callable[..., SiteMap] = _real_crawl
 """Injection seam: tests monkeypatch this to skip the browser."""
 
 _extract_fields: Callable[..., list] = _real_extract_fields
+"""Injection seam: tests monkeypatch this to skip the browser."""
+
+_run_flow: Callable[..., RunResult] = _real_run_flow
 """Injection seam: tests monkeypatch this to skip the browser."""
 
 
@@ -282,6 +287,76 @@ def _projects_tests_save(payload: dict) -> dict:
     return out
 
 
+def _projects_tests_run(payload: dict) -> dict:
+    """Execute one of the project's tests and return the RunResult.
+
+    The test is identified by `test` — either a path relative to the project
+    directory (matching what `project.tests` stores) or an absolute path that
+    must resolve under the project root. Screenshots and a `result.json` are
+    written to `<source_dir>/runs/<test-stem>/`, overwritten on each run.
+    The injection seam is `_run_flow`; tests stub it to skip Playwright.
+    """
+    path = _require_str(payload, "path")
+    test_rel = _require_str(payload, "test")
+    project = _load_project(path)
+
+    test_path = _resolve_project_relative(project, test_rel, "test")
+    if not test_path.exists():
+        raise RouteError(400, f"test file not found: {test_path}")
+    try:
+        test = load_test(test_path)
+    except (ValueError, OSError) as exc:
+        raise RouteError(400, f"invalid test: {exc}") from exc
+
+    run_dir = project.source_dir / DEFAULT_RUNS_DIR / _safe_name(test_path.stem)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    session = project.session_resolved
+    viewport = _resolve_viewport(project)
+    try:
+        result = _run_flow(
+            test,
+            run_dir,
+            viewport=viewport,
+            headless=not bool(payload.get("headed", False)),
+            session=str(session) if session is not None else None,
+        )
+    except Exception as exc:  # noqa: BLE001 — surfaces as 500 with a tidy message
+        raise RouteError(500, f"run failed: {exc}") from exc
+
+    result_dict = result.to_dict()
+    result_path = run_dir / RUN_RESULT_FILENAME
+    result_path.write_text(
+        json.dumps(result_dict, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "result": result_dict,
+        "run_dir": str(run_dir.resolve()),
+        "result_path": str(result_path.resolve()),
+    }
+
+
+def _resolve_project_relative(project: Project, raw: str, label: str) -> Path:
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    else:
+        resolved = (project.source_dir / candidate).resolve()
+    try:
+        resolved.relative_to(project.source_dir.resolve())
+    except ValueError as exc:
+        raise RouteError(400, f"{label!r} must resolve inside the project directory") from exc
+    return resolved
+
+
+def _resolve_viewport(project: Project) -> tuple[int, int]:
+    if project.viewports:
+        first = project.viewports[0]
+        return (first.width, first.height)
+    return (1280, 800)
+
+
 def _field_to_dict(field: Field) -> dict:
     return field.to_dict()
 
@@ -432,6 +507,7 @@ ROUTES: dict[tuple[str, str], Route] = {
     ("POST", "/api/projects/extract"): _projects_extract,
     ("POST", "/api/projects/suggest"): _projects_suggest,
     ("POST", "/api/projects/tests/save"): _projects_tests_save,
+    ("POST", "/api/projects/tests/run"): _projects_tests_run,
 }
 
 

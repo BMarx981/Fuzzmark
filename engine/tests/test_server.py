@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from fuzzmark.driver import CaptureArtifact, RunResult
 from fuzzmark.extractor import Field, Option, Validation
 from fuzzmark.scanner import CrawlBounds, Page, SiteMap, SkippedUrl
 from fuzzmark.server import RouteError, dispatch, make_server
@@ -578,6 +579,141 @@ class TestTestsSaveRoute:
                 "POST",
                 "/api/projects/tests/save",
                 {"path": path, "test": {"name": "x", "flow": []}},
+            )
+        assert excinfo.value.status == 400
+
+
+class TestTestsRunRoute:
+    def _project_with_test(self, tmp_path: Path) -> tuple[str, str]:
+        path = str(tmp_path / "project.json")
+        dispatch(
+            "POST",
+            "/api/projects/init",
+            {
+                "path": path,
+                "name": "demo",
+                "base_url": "http://x/",
+                "viewports": [
+                    {"name": "desktop", "width": 1024, "height": 768}
+                ],
+            },
+        )
+        body = dispatch(
+            "POST",
+            "/api/projects/tests/save",
+            {
+                "path": path,
+                "test": {
+                    "name": "smoke",
+                    "flow": [
+                        {"kind": "visit", "url": "http://x/"},
+                        {"kind": "capture", "name": "home"},
+                    ],
+                },
+            },
+        )
+        return path, body["tests"][0]
+
+    def _stub_run(self, captured: dict, run_dir_capture: dict) -> object:
+        def fake(test, output_dir, *, viewport, headless, session):
+            captured["test_name"] = test.name
+            captured["viewport"] = viewport
+            captured["headless"] = headless
+            captured["session"] = session
+            run_dir_capture["dir"] = Path(output_dir)
+            screenshot = Path(output_dir) / "home.png"
+            screenshot.parent.mkdir(parents=True, exist_ok=True)
+            screenshot.write_bytes(b"\x89PNG\r\n\x1a\n")
+            return RunResult(
+                test_name=test.name,
+                captures=[
+                    CaptureArtifact(
+                        name="home",
+                        step_index=1,
+                        screenshot_path=str(screenshot),
+                    )
+                ],
+            )
+
+        return fake
+
+    def test_runs_test_and_writes_result(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path, test_rel = self._project_with_test(tmp_path)
+        captured: dict = {}
+        run_dir_capture: dict = {}
+        monkeypatch.setattr(
+            server_routes, "_run_flow", self._stub_run(captured, run_dir_capture)
+        )
+
+        body = dispatch(
+            "POST",
+            "/api/projects/tests/run",
+            {"path": path, "test": test_rel},
+        )
+
+        assert captured["test_name"] == "smoke"
+        assert captured["viewport"] == (1024, 768)
+        assert captured["headless"] is True
+        assert captured["session"] is None
+        assert run_dir_capture["dir"] == tmp_path / "runs" / "smoke"
+        assert body["result"]["test_name"] == "smoke"
+        assert body["result"]["captures"][0]["name"] == "home"
+        assert body["run_dir"] == str((tmp_path / "runs" / "smoke").resolve())
+        result_path = Path(body["result_path"])
+        assert result_path.exists()
+        on_disk = json.loads(result_path.read_text(encoding="utf-8"))
+        assert on_disk["test_name"] == "smoke"
+
+    def test_honors_headed_flag(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path, test_rel = self._project_with_test(tmp_path)
+        captured: dict = {}
+        monkeypatch.setattr(
+            server_routes, "_run_flow", self._stub_run(captured, {})
+        )
+
+        dispatch(
+            "POST",
+            "/api/projects/tests/run",
+            {"path": path, "test": test_rel, "headed": True},
+        )
+        assert captured["headless"] is False
+
+    def test_rejects_test_outside_project(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path, _ = self._project_with_test(tmp_path)
+        outside = tmp_path.parent / "elsewhere.json"
+
+        def fail(*_a, **_kw):
+            raise AssertionError("run should not start when test path is rejected")
+
+        monkeypatch.setattr(server_routes, "_run_flow", fail)
+        with pytest.raises(RouteError) as excinfo:
+            dispatch(
+                "POST",
+                "/api/projects/tests/run",
+                {"path": path, "test": str(outside)},
+            )
+        assert excinfo.value.status == 400
+
+    def test_rejects_missing_test_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path, _ = self._project_with_test(tmp_path)
+
+        def fail(*_a, **_kw):
+            raise AssertionError("run should not start when test file is missing")
+
+        monkeypatch.setattr(server_routes, "_run_flow", fail)
+        with pytest.raises(RouteError) as excinfo:
+            dispatch(
+                "POST",
+                "/api/projects/tests/run",
+                {"path": path, "test": "tests/nope.json"},
             )
         assert excinfo.value.status == 400
 

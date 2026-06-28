@@ -258,6 +258,108 @@ class FieldSuggestion {
       );
 }
 
+class RunCapture {
+  RunCapture({
+    required this.name,
+    required this.stepIndex,
+    required this.screenshotPath,
+    required this.viewport,
+  });
+
+  final String name;
+  final int stepIndex;
+  final String screenshotPath;
+  final String? viewport;
+
+  factory RunCapture.fromJson(Map<String, dynamic> json) => RunCapture(
+        name: json['name'] as String,
+        stepIndex: (json['step_index'] as num).toInt(),
+        screenshotPath: json['screenshot_path'] as String,
+        viewport: json['viewport'] as String?,
+      );
+}
+
+class RunConsoleMessage {
+  RunConsoleMessage({required this.level, required this.text});
+
+  final String level;
+  final String text;
+
+  factory RunConsoleMessage.fromJson(Map<String, dynamic> json) =>
+      RunConsoleMessage(
+        level: json['level'] as String,
+        text: json['text'] as String,
+      );
+}
+
+class RunFailedRequest {
+  RunFailedRequest({
+    required this.url,
+    required this.method,
+    required this.failure,
+    required this.status,
+  });
+
+  final String url;
+  final String method;
+  final String? failure;
+  final int? status;
+
+  factory RunFailedRequest.fromJson(Map<String, dynamic> json) =>
+      RunFailedRequest(
+        url: json['url'] as String,
+        method: json['method'] as String,
+        failure: json['failure'] as String?,
+        status: (json['status'] as num?)?.toInt(),
+      );
+}
+
+class RunResult {
+  RunResult({
+    required this.testName,
+    required this.captures,
+    required this.consoleErrors,
+    required this.pageErrors,
+    required this.failedRequests,
+    required this.runDir,
+    required this.resultPath,
+  });
+
+  final String testName;
+  final List<RunCapture> captures;
+  final List<RunConsoleMessage> consoleErrors;
+  final List<String> pageErrors;
+  final List<RunFailedRequest> failedRequests;
+  final String runDir;
+  final String resultPath;
+
+  bool get hasErrors =>
+      consoleErrors.isNotEmpty ||
+      pageErrors.isNotEmpty ||
+      failedRequests.isNotEmpty;
+
+  factory RunResult.fromJson(Map<String, dynamic> json) {
+    final result = json['result'] as Map<String, dynamic>;
+    return RunResult(
+      testName: result['test_name'] as String,
+      captures: (result['captures'] as List? ?? [])
+          .map((c) => RunCapture.fromJson(c as Map<String, dynamic>))
+          .toList(),
+      consoleErrors: (result['console_errors'] as List? ?? [])
+          .map((c) => RunConsoleMessage.fromJson(c as Map<String, dynamic>))
+          .toList(),
+      pageErrors: (result['page_errors'] as List? ?? [])
+          .whereType<String>()
+          .toList(),
+      failedRequests: (result['failed_requests'] as List? ?? [])
+          .map((r) => RunFailedRequest.fromJson(r as Map<String, dynamic>))
+          .toList(),
+      runDir: json['run_dir'] as String,
+      resultPath: json['result_path'] as String,
+    );
+  }
+}
+
 class FuzzmarkApi {
   FuzzmarkApi({Uri? baseUri, http.Client? client})
       : baseUri = baseUri ?? Uri.parse('http://127.0.0.1:8765'),
@@ -353,6 +455,19 @@ class FuzzmarkApi {
       if (force) 'force': true,
     });
     return FuzzmarkProject.fromJson(res);
+  }
+
+  Future<RunResult> runTest({
+    required String projectPath,
+    required String testRelativePath,
+    bool headed = false,
+  }) async {
+    final res = await _post('/api/projects/tests/run', {
+      'path': projectPath,
+      'test': testRelativePath,
+      if (headed) 'headed': true,
+    });
+    return RunResult.fromJson(res);
   }
 
   Future<FuzzmarkProject> initProject({
