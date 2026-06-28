@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ..compare import MaskRegion
 from .models import (
     CAPTURE,
     FILL,
@@ -88,6 +89,8 @@ def _parse_step(raw: object, idx: int) -> FlowStep:
     if not isinstance(full_page, bool):
         raise ValueError(f"step {idx}: 'full_page' must be a bool")
 
+    mask_selectors, mask_regions = _parse_masks(raw, idx, kind)
+
     return FlowStep(
         kind=kind,
         url=raw.get("url"),
@@ -96,4 +99,58 @@ def _parse_step(raw: object, idx: int) -> FlowStep:
         action=raw.get("action"),
         name=raw.get("name"),
         full_page=full_page,
+        mask_selectors=mask_selectors,
+        mask_regions=mask_regions,
     )
+
+
+def _parse_masks(
+    raw: dict, idx: int, kind: str
+) -> tuple[tuple[str, ...], tuple[MaskRegion, ...]]:
+    selectors = raw.get("mask_selectors")
+    regions = raw.get("mask_regions")
+    if selectors is None and regions is None:
+        return (), ()
+    if kind != CAPTURE:
+        raise ValueError(
+            f"step {idx} ({kind}): 'mask_selectors'/'mask_regions' are only valid on capture steps"
+        )
+
+    parsed_selectors: tuple[str, ...] = ()
+    if selectors is not None:
+        if not isinstance(selectors, list) or not all(
+            isinstance(s, str) and s.strip() for s in selectors
+        ):
+            raise ValueError(
+                f"step {idx}: 'mask_selectors' must be a list of non-empty strings"
+            )
+        parsed_selectors = tuple(s.strip() for s in selectors)
+
+    parsed_regions: tuple[MaskRegion, ...] = ()
+    if regions is not None:
+        if not isinstance(regions, list):
+            raise ValueError(f"step {idx}: 'mask_regions' must be a list")
+        parsed_regions = tuple(_parse_region(r, idx, i) for i, r in enumerate(regions))
+
+    return parsed_selectors, parsed_regions
+
+
+def _parse_region(raw: object, step_idx: int, region_idx: int) -> MaskRegion:
+    where = f"step {step_idx} mask_regions[{region_idx}]"
+    if not isinstance(raw, dict):
+        raise ValueError(f"{where}: must be an object")
+    try:
+        x = int(raw["x"])
+        y = int(raw["y"])
+        width = int(raw["width"])
+        height = int(raw["height"])
+    except KeyError as exc:
+        raise ValueError(f"{where}: missing field {exc.args[0]!r}") from exc
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{where}: x/y/width/height must be integers") from exc
+    if width <= 0 or height <= 0:
+        raise ValueError(f"{where}: width and height must be positive")
+    source = raw.get("source", "region")
+    if not isinstance(source, str) or not source:
+        raise ValueError(f"{where}: 'source' must be a non-empty string")
+    return MaskRegion(x=x, y=y, width=width, height=height, source=source)

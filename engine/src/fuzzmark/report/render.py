@@ -48,14 +48,14 @@ def render_report(
     images_dir.mkdir(parents=True, exist_ok=True)
 
     baselines = Path(baselines_dir) if baselines_dir is not None else None
-    masks_by_name = masks or {}
+    masks_by_name = masks
     entries = [
         _build_entry(
             capture,
             images_dir,
             baselines,
             threshold,
-            masks=masks_by_name.get(capture["name"]),
+            masks=_masks_for(capture, masks_by_name),
         )
         for capture in run_result.get("captures", [])
     ]
@@ -73,6 +73,18 @@ def render_report(
     index_path.write_text(_render_html(report), encoding="utf-8")
     report.index_path = str(index_path)
     return report
+
+
+def _masks_for(
+    capture: dict, override: dict[str, list[MaskRegion]] | None
+) -> list[MaskRegion] | None:
+    """Return masks for one capture: CLI override per-capture name wins, else the per-capture list from the run result."""
+    if override is not None and capture["name"] in override:
+        return override[capture["name"]]
+    raw = capture.get("masks")
+    if not raw:
+        return None
+    return [MaskRegion(**m) for m in raw]
 
 
 def _build_entry(

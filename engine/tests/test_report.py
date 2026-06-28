@@ -170,6 +170,90 @@ class TestIdempotency:
         assert Path(second.index_path).read_bytes() == first_bytes
 
 
+class TestPerCaptureMasks:
+    @staticmethod
+    def _solid_with_patch(
+        path: Path,
+        bg: tuple[int, int, int],
+        patch: tuple[int, int, int],
+        box: tuple[int, int, int, int],
+    ) -> Path:
+        img = np.full((40, 60, 3), bg, dtype=np.uint8)
+        x, y, w, h = box
+        img[y : y + h, x : x + w] = patch
+        cv2.imwrite(str(path), img)
+        return path
+
+    def test_per_capture_masks_from_run_result_blank_a_diff(self, tmp_path: Path) -> None:
+        captures_dir = tmp_path / "shots"
+        captures_dir.mkdir()
+        baselines = tmp_path / "baselines"
+        baselines.mkdir()
+        capture_path = self._solid_with_patch(
+            captures_dir / "a.png", (200, 200, 200), (0, 0, 255), (5, 5, 20, 10)
+        )
+        self._solid_with_patch(
+            baselines / "a.png", (200, 200, 200), (255, 0, 0), (5, 5, 20, 10)
+        )
+
+        result = {
+            "test_name": "demo",
+            "captures": [
+                {
+                    "name": "a",
+                    "step_index": 0,
+                    "screenshot_path": str(capture_path),
+                    "masks": [
+                        {"x": 5, "y": 5, "width": 20, "height": 10, "source": "#flag"}
+                    ],
+                }
+            ],
+            "console_errors": [],
+            "page_errors": [],
+            "failed_requests": [],
+        }
+        report = render_report(result, tmp_path / "report", baselines_dir=baselines)
+        assert report.entries[0].verdict == PASS
+
+    def test_cli_mask_override_replaces_per_capture(self, tmp_path: Path) -> None:
+        from fuzzmark.compare import MaskRegion
+
+        captures_dir = tmp_path / "shots"
+        captures_dir.mkdir()
+        baselines = tmp_path / "baselines"
+        baselines.mkdir()
+        capture_path = self._solid_with_patch(
+            captures_dir / "a.png", (200, 200, 200), (0, 0, 255), (5, 5, 20, 10)
+        )
+        self._solid_with_patch(
+            baselines / "a.png", (200, 200, 200), (255, 0, 0), (5, 5, 20, 10)
+        )
+
+        result = {
+            "test_name": "demo",
+            "captures": [
+                {
+                    "name": "a",
+                    "step_index": 0,
+                    "screenshot_path": str(capture_path),
+                    "masks": [
+                        {"x": 0, "y": 30, "width": 5, "height": 5, "source": "bogus"}
+                    ],
+                }
+            ],
+            "console_errors": [],
+            "page_errors": [],
+            "failed_requests": [],
+        }
+        report = render_report(
+            result,
+            tmp_path / "report",
+            baselines_dir=baselines,
+            masks={"a": [MaskRegion(x=5, y=5, width=20, height=10, source="cli")]},
+        )
+        assert report.entries[0].verdict == PASS
+
+
 class TestPaths:
     def test_image_srcs_are_relative_to_output(self, tmp_path: Path) -> None:
         result = _run_result(tmp_path / "shots", [("a", 0, (0, 0, 0))])

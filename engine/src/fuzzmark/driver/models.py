@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Optional
 
 from ..capture import ConsoleMessage, FailedRequest
+from ..compare import MaskRegion
 
 
 VISIT = "visit"
@@ -39,6 +40,8 @@ class FlowStep:
     action: Optional[str] = None
     name: Optional[str] = None
     full_page: bool = True
+    mask_selectors: tuple[str, ...] = ()
+    mask_regions: tuple[MaskRegion, ...] = ()
 
     def to_dict(self) -> dict:
         out: dict = {"kind": self.kind}
@@ -48,6 +51,10 @@ class FlowStep:
                 out[attr] = v
         if self.kind == CAPTURE and not self.full_page:
             out["full_page"] = False
+        if self.mask_selectors:
+            out["mask_selectors"] = list(self.mask_selectors)
+        if self.mask_regions:
+            out["mask_regions"] = [r.to_dict() for r in self.mask_regions]
         return out
 
 
@@ -71,6 +78,15 @@ class CaptureArtifact:
     name: str
     step_index: int
     screenshot_path: str
+    masks: tuple[MaskRegion, ...] = ()
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "step_index": self.step_index,
+            "screenshot_path": self.screenshot_path,
+            "masks": [m.to_dict() for m in self.masks],
+        }
 
 
 @dataclass

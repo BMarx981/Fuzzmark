@@ -85,6 +85,49 @@ def test_run_returns_test_name(tmp_path: Path, fixture_form_url: str) -> None:
     assert result.test_name == "fill-and-submit"
 
 
+def test_selector_masks_resolve_to_bounding_boxes(
+    tmp_path: Path, fixture_form_url: str
+) -> None:
+    """A `mask_selectors` entry on a capture step becomes a MaskRegion on the artifact."""
+    flow = Test(
+        name="masked-capture",
+        flow=[
+            FlowStep(kind=VISIT, url=fixture_form_url),
+            FlowStep(
+                kind=CAPTURE,
+                name="snap",
+                mask_selectors=("h1", "#email"),
+            ),
+        ],
+    )
+    result = run_flow(flow, tmp_path / "captures")
+    [art] = result.captures
+    sources = [m.source for m in art.masks]
+    assert "h1" in sources
+    assert "#email" in sources
+    for m in art.masks:
+        assert m.width > 0 and m.height > 0
+        assert m.x >= 0 and m.y >= 0
+
+
+def test_missing_selector_masks_are_silently_skipped(
+    tmp_path: Path, fixture_form_url: str
+) -> None:
+    flow = Test(
+        name="missing-selector",
+        flow=[
+            FlowStep(kind=VISIT, url=fixture_form_url),
+            FlowStep(
+                kind=CAPTURE,
+                name="snap",
+                mask_selectors=("#does-not-exist",),
+            ),
+        ],
+    )
+    result = run_flow(flow, tmp_path / "captures")
+    assert result.captures[0].masks == ()
+
+
 def test_submit_does_not_raise_on_form_without_handler(
     tmp_path: Path, fixture_form_url: str
 ) -> None:

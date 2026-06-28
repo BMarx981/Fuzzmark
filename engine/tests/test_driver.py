@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from fuzzmark.compare import MaskRegion
 from fuzzmark.driver import (
     CAPTURE,
     FILL,
@@ -217,6 +218,85 @@ class TestFlowStepSerialization:
             "kind": "submit",
             "selector": "button[type='submit']",
         }
+
+
+class TestCaptureMasks:
+    def test_selectors_and_regions_round_trip(self) -> None:
+        raw = {
+            "name": "x",
+            "flow": [
+                {"kind": "visit", "url": "about:blank"},
+                {
+                    "kind": "capture",
+                    "name": "c",
+                    "mask_selectors": ["#clock", ".ad"],
+                    "mask_regions": [
+                        {"x": 10, "y": 20, "width": 30, "height": 40, "source": "logo"}
+                    ],
+                },
+            ],
+        }
+        test = parse_test(raw)
+        cap = test.flow[-1]
+        assert cap.mask_selectors == ("#clock", ".ad")
+        assert cap.mask_regions == (
+            MaskRegion(x=10, y=20, width=30, height=40, source="logo"),
+        )
+        assert parse_test(test.to_dict()).to_dict() == test.to_dict()
+
+    def test_selectors_strip_whitespace(self) -> None:
+        raw = {
+            "name": "x",
+            "flow": [
+                {"kind": "visit", "url": "about:blank"},
+                {"kind": "capture", "name": "c", "mask_selectors": ["  #clock  "]},
+            ],
+        }
+        assert parse_test(raw).flow[-1].mask_selectors == ("#clock",)
+
+    def test_selectors_must_be_non_empty_strings(self) -> None:
+        raw = {
+            "name": "x",
+            "flow": [
+                {"kind": "visit", "url": "about:blank"},
+                {"kind": "capture", "name": "c", "mask_selectors": ["   "]},
+            ],
+        }
+        with pytest.raises(ValueError, match="mask_selectors"):
+            parse_test(raw)
+
+    def test_regions_require_positive_size(self) -> None:
+        raw = {
+            "name": "x",
+            "flow": [
+                {"kind": "visit", "url": "about:blank"},
+                {
+                    "kind": "capture",
+                    "name": "c",
+                    "mask_regions": [{"x": 0, "y": 0, "width": 0, "height": 10}],
+                },
+            ],
+        }
+        with pytest.raises(ValueError, match="positive"):
+            parse_test(raw)
+
+    def test_masks_rejected_on_non_capture_steps(self) -> None:
+        raw = {
+            "name": "x",
+            "flow": [
+                {"kind": "visit", "url": "about:blank", "mask_selectors": ["#x"]},
+                {"kind": "capture", "name": "c"},
+            ],
+        }
+        with pytest.raises(ValueError, match="only valid on capture"):
+            parse_test(raw)
+
+    def test_omitted_masks_default_to_empty_tuples(self) -> None:
+        cap = FlowStep(kind=CAPTURE, name="c")
+        assert cap.mask_selectors == ()
+        assert cap.mask_regions == ()
+        assert "mask_selectors" not in cap.to_dict()
+        assert "mask_regions" not in cap.to_dict()
 
 
 class TestEnvelope:

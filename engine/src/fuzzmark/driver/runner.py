@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..capture import ConsoleMessage, FailedRequest
+from ..compare import MaskRegion
 from .models import (
     CAPTURE,
     CLICK,
@@ -153,9 +154,56 @@ def _execute_step(
     if step.kind == CAPTURE:
         path = out_dir / f"{step.name}.png"
         page.screenshot(path=str(path), full_page=step.full_page)
+        masks = tuple(step.mask_regions) + tuple(
+            _resolve_selector_masks(page, step.mask_selectors, timeout_ms=timeout_ms)
+        )
         captures.append(
-            CaptureArtifact(name=step.name, step_index=idx, screenshot_path=str(path))
+            CaptureArtifact(
+                name=step.name,
+                step_index=idx,
+                screenshot_path=str(path),
+                masks=masks,
+            )
         )
         return
 
     raise AssertionError(f"unreachable: unknown step kind {step.kind!r}")
+
+
+def _resolve_selector_masks(
+    page, selectors: tuple[str, ...], *, timeout_ms: int
+) -> list[MaskRegion]:
+    """Resolve each selector to bounding boxes for every matching element.
+
+    Missing matches are silently skipped — a selector that resolves to nothing
+    contributes no masks but does not fail the capture, because the page may
+    legitimately render the volatile region only on some paths.
+    """
+    regions: list[MaskRegion] = []
+    for selector in selectors:
+        locator = page.locator(selector)
+        try:
+            count = locator.count()
+        except Exception:
+            continue
+        for i in range(count):
+            try:
+                box = locator.nth(i).bounding_box(timeout=timeout_ms)
+            except Exception:
+                box = None
+            if not box:
+                continue
+            width = int(round(box["width"]))
+            height = int(round(box["height"]))
+            if width <= 0 or height <= 0:
+                continue
+            regions.append(
+                MaskRegion(
+                    x=int(round(box["x"])),
+                    y=int(round(box["y"])),
+                    width=width,
+                    height=height,
+                    source=selector,
+                )
+            )
+    return regions

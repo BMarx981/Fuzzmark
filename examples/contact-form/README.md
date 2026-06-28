@@ -58,12 +58,13 @@ payloads for `email`, the option set for `topic`, and so on. This is the
 ## 4. Run the happy-path test
 
 ```bash
-fuzzmark run tests/happy-path.json --out runs/happy
+mkdir -p runs/happy
+fuzzmark run tests/happy-path.json --out runs/happy > runs/happy/result.json
 ```
 
-This writes a screenshot per `capture` step into `runs/happy/` plus a
-`result.json` summarizing the flow. Three captures: `blank-form`,
-`filled-form`, `thank-you`.
+`run` writes one PNG per `capture` step into `--out` and prints the result
+JSON to stdout — redirect it to a file so the later steps can read it.
+Expect three captures: `blank-form`, `filled-form`, `thank-you`.
 
 ## 5. Render a report
 
@@ -88,7 +89,8 @@ the `baselines/` directory alongside the test JSON to version-control the
 ## 7. Re-run and compare
 
 ```bash
-fuzzmark run tests/happy-path.json --out runs/happy-2
+mkdir -p runs/happy-2
+fuzzmark run tests/happy-path.json --out runs/happy-2 > runs/happy-2/result.json
 fuzzmark report runs/happy-2/result.json --out runs/happy-2/report \
   --baselines baselines
 open runs/happy-2/report/index.html
@@ -101,7 +103,9 @@ re-run to see a non-pass verdict and a diff heatmap.
 ## 8. Run the negative test
 
 ```bash
-fuzzmark run tests/missing-required.json --out runs/missing
+mkdir -p runs/missing
+fuzzmark run tests/missing-required.json --out runs/missing \
+  > runs/missing/result.json
 fuzzmark report runs/missing/result.json --out runs/missing/report
 ```
 
