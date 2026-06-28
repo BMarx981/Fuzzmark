@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 import pytest
 
-from fuzzmark.compare import CHANGE, PASS, SIZE_SHIFT, compare_images
+from fuzzmark.compare import PASS, SIZE_SHIFT, compare_images
 from fuzzmark.compare.align import (
     Alignment,
     MAX_ROTATION_DEG,
@@ -100,12 +100,18 @@ class TestUntouched:
         assert result.verdict == PASS
         assert result.alignment is None
 
-    def test_real_content_change_stays_change(self, tmp_path: Path) -> None:
+    def test_real_content_change_is_not_rescued_as_size_shift(
+        self, tmp_path: Path
+    ) -> None:
+        """The alignment pass must not flip a real content regression to size-shift.
+
+        Whether the structural classifier then calls it content-change or
+        layout-break depends on whether the noise dilates into the same hull
+        — that's the structural module's contract, not the alignment pass's."""
         baseline = _textured(tmp_path / "base.png", seed=4)
-        # Different seed → entirely different rectangle layout, not a shift.
         candidate = _textured(tmp_path / "cand.png", seed=99)
         result = compare_images(baseline, candidate, threshold=_TEST_THRESHOLD)
-        assert result.verdict == CHANGE
+        assert result.verdict not in (PASS, SIZE_SHIFT)
         assert result.alignment is None
 
 

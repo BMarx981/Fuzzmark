@@ -1,4 +1,4 @@
-"""Tiered image comparison: SSIM first, alignment pass to rescue benign global shifts.
+"""Tiered image comparison: SSIM, alignment rescue, then structural classification.
 
 SSIM runs on the BGR image with channel_axis=-1 so a color change to an
 otherwise-identical region (e.g. a button background swap) registers as a real
@@ -7,8 +7,10 @@ difference. Grayscale SSIM would discard chroma and miss equiluminant swaps.
 When SSIM falls below threshold, the alignment pass (spec §5.7 step 2) tries to
 warp the candidate into the baseline's coordinate space via a small partial
 affine transform; if that warp brings SSIM back over threshold, the verdict is
-`size-shift` rather than `change`. The pre-warp `score` and pre-warp heatmap
-are preserved on the result so the user can see what the raw diff looked like.
+`size-shift`. If alignment can't rescue, the structural classifier (spec §5.7
+step 4) compares block bounding boxes and picks `content-change` when the
+layout is intact or `layout-break` when blocks moved, appeared, or disappeared.
+The pre-warp `score` and pre-warp heatmap are always preserved on the result.
 """
 
 from __future__ import annotations
@@ -21,7 +23,14 @@ from skimage.metrics import structural_similarity
 
 from .align import try_align_to_baseline
 from .masks import MaskRegion, apply_masks
-from .result import CHANGE, PASS, SIZE_SHIFT, CompareResult
+from .result import (
+    CONTENT_CHANGE,
+    LAYOUT_BREAK,
+    PASS,
+    SIZE_SHIFT,
+    CompareResult,
+)
+from .structure import compare_structure, is_layout_intact
 
 
 DEFAULT_THRESHOLD = 0.99
@@ -83,9 +92,10 @@ def compare_images(
 
     Returns:
         A `CompareResult` carrying the pre-alignment SSIM score, threshold,
-        verdict (`pass` / `size-shift` / `change`), heatmap path if requested,
-        and the fitted `alignment` summary when a small global shift rescued
-        the comparison.
+        verdict (`pass` / `size-shift` / `content-change` / `layout-break`),
+        heatmap path if requested, the fitted `alignment` summary when a
+        small global shift rescued the comparison, and the `structure`
+        diagnostic that drove a content-change-vs-layout-break decision.
     """
     baseline_path = Path(baseline_path)
     candidate_path = Path(candidate_path)
@@ -105,10 +115,12 @@ def compare_images(
         _write_heatmap(ssim_map, out)
         written_diff = str(out)
 
-    verdict = PASS if score >= threshold else CHANGE
     alignment_dict: dict | None = None
+    structure_dict: dict | None = None
 
-    if verdict == CHANGE:
+    if score >= threshold:
+        verdict = PASS
+    else:
         aligned = try_align_to_baseline(baseline, candidate)
         if aligned is not None:
             warped, alignment = aligned
@@ -116,6 +128,10 @@ def compare_images(
             if post_score >= threshold:
                 verdict = SIZE_SHIFT
                 alignment_dict = {**alignment.to_dict(), "post_warp_score": post_score}
+            else:
+                verdict, structure_dict = _classify_structure(baseline, candidate)
+        else:
+            verdict, structure_dict = _classify_structure(baseline, candidate)
 
     return CompareResult(
         baseline_path=str(baseline_path),
@@ -125,4 +141,13 @@ def compare_images(
         verdict=verdict,
         diff_path=written_diff,
         alignment=alignment_dict,
+        structure=structure_dict,
     )
+
+
+def _classify_structure(
+    baseline: np.ndarray, candidate: np.ndarray
+) -> tuple[str, dict]:
+    summary = compare_structure(baseline, candidate)
+    verdict = CONTENT_CHANGE if is_layout_intact(summary) else LAYOUT_BREAK
+    return verdict, summary.to_dict()

@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 import pytest
 
-from fuzzmark.compare import CHANGE, PASS, compare_images
+from fuzzmark.compare import CONTENT_CHANGE, LAYOUT_BREAK, PASS, compare_images
 
 
 def _solid(path: Path, color: tuple[int, int, int], size: tuple[int, int] = (200, 200)) -> Path:
@@ -42,18 +42,26 @@ class TestIdentical:
 
 
 class TestChange:
-    def test_clearly_different_images_register_as_change(self, tmp_path: Path) -> None:
+    def test_clearly_different_solid_colors_classify_as_content_change(
+        self, tmp_path: Path
+    ) -> None:
+        """Solid → solid: no blocks detected on either side, so the structural pass
+        sees the layout as (vacuously) intact and the verdict is content-change."""
         baseline = _solid(tmp_path / "base.png", (0, 0, 0))
         candidate = _solid(tmp_path / "cand.png", (255, 255, 255))
         result = compare_images(baseline, candidate)
-        assert result.verdict == CHANGE
+        assert result.verdict == CONTENT_CHANGE
         assert result.score < 0.99
 
-    def test_structural_change_caught(self, tmp_path: Path) -> None:
+    def test_block_appearing_in_empty_baseline_is_layout_break(
+        self, tmp_path: Path
+    ) -> None:
+        """A checkerboard in front of a blank baseline introduces blocks where the
+        baseline had none — the structural classifier reads that as layout-break."""
         baseline = _solid(tmp_path / "base.png", (255, 255, 255))
         candidate = _checkerboard(tmp_path / "cand.png")
         result = compare_images(baseline, candidate)
-        assert result.verdict == CHANGE
+        assert result.verdict == LAYOUT_BREAK
 
 
 class TestThresholdTuning:
@@ -63,7 +71,7 @@ class TestThresholdTuning:
         strict = compare_images(baseline, candidate, threshold=0.999)
         lenient = compare_images(baseline, candidate, threshold=0.5)
         assert strict.score == lenient.score
-        assert strict.verdict == CHANGE
+        assert strict.verdict == CONTENT_CHANGE
         assert lenient.verdict == PASS
 
 

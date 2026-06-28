@@ -12,7 +12,6 @@ import numpy as np
 import pytest
 
 from fuzzmark.compare import (
-    CHANGE,
     PASS,
     MaskRegion,
     apply_masks,
@@ -133,7 +132,7 @@ class TestCompareWithMasks:
         masked = compare_images(
             base, cand, threshold=0.99, masks=[MaskRegion(40, 40, 60, 60)]
         )
-        assert unmasked.verdict == CHANGE
+        assert unmasked.verdict != PASS
         assert masked.verdict == PASS
         assert masked.score > unmasked.score
 
@@ -156,7 +155,7 @@ class TestCompareWithMasks:
         result = compare_images(
             base, cand, threshold=0.99, masks=[MaskRegion(40, 40, 30, 30)]
         )
-        assert result.verdict == CHANGE
+        assert result.verdict != PASS
 
     def test_out_of_bounds_mask_does_not_raise(self, tmp_path: Path):
         base = _solid(tmp_path / "base.png", (200, 100, 50))

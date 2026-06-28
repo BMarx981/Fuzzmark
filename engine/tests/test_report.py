@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 import pytest
 
-from fuzzmark.compare import CHANGE, PASS
+from fuzzmark.compare import CONTENT_CHANGE, PASS
 from fuzzmark.report import NO_BASELINE, render_report
 
 
@@ -89,8 +89,8 @@ class TestWithBaselines:
         _solid(baselines / "a.png", (255, 255, 255))
 
         report = render_report(result, tmp_path / "report", baselines_dir=baselines)
-        assert report.entries[0].verdict == CHANGE
-        assert report.verdict_counts == {CHANGE: 1}
+        assert report.entries[0].verdict == CONTENT_CHANGE
+        assert report.verdict_counts == {CONTENT_CHANGE: 1}
 
     def test_missing_baseline_for_one_capture_falls_back_to_no_baseline(
         self, tmp_path: Path
