@@ -49,7 +49,7 @@ playwright install chromium
   spec's build order; do not jump ahead of the current phase.
 - Keep logic modules importable without a browser. Only `extractor`, `driver`,
   and `capture` should depend on the browser; `suggestions`, `compare`,
-  `baselines`, and `report` should not.
+  `baselines`, `report`, and `project` should not.
 
 ## Scope guardrails — current phase: MVP
 

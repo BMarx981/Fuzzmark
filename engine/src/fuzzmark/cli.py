@@ -6,31 +6,42 @@ import argparse
 import json
 import sys
 
+from pathlib import Path
+
 from .baselines import apply_approval, plan_approval
 from .capture import capture_page
 from .compare import DEFAULT_THRESHOLD, MaskRegion, compare_images, parse_mask_spec
 from .driver import load_test, run_flow
 from .extractor import extract_fields, extract_site
+from .project import Project, ProjectError, ProjectViewport, init_project, load_project
 from .report import render_report
 from .scanner import CrawlBounds, crawl
 from .sessions import SessionError, capture_session, validate_session
 from .suggestions import load_custom_tables, merge_tables, suggest, suggest_site
 
 
+DEFAULT_VIEWPORT = (1280, 800)
+
+
 def _cmd_extract(args: argparse.Namespace) -> None:
-    session = _resolve_session_arg(args)
-    if args.scan:
-        site_map = json.loads(open(args.scan, encoding="utf-8").read())
+    project = _load_project_arg(args)
+    session = _resolve_session_arg(args, project)
+    scan_path = _resolve_scan_arg(args, project)
+    if scan_path:
+        site_map = json.loads(open(scan_path, encoding="utf-8").read())
         extractor = lambda url: extract_fields(
             url, headless=not args.headed, session=session
         )
         payload = extract_site(site_map, extractor=extractor, include=args.include or None)
     else:
-        if not args.url:
-            raise SystemExit("extract: pass a URL or --scan <site-map.json>")
-        fields = extract_fields(args.url, headless=not args.headed, session=session)
+        url = args.url or (project.base_url if project else None)
+        if not url:
+            raise SystemExit(
+                "extract: pass a URL, --scan <site-map.json>, or --project <project.json>"
+            )
+        fields = extract_fields(url, headless=not args.headed, session=session)
         payload = {
-            "url": args.url,
+            "url": url,
             "field_count": len(fields),
             "fields": [f.to_dict() for f in fields],
         }
@@ -39,19 +50,25 @@ def _cmd_extract(args: argparse.Namespace) -> None:
 
 
 def _cmd_suggest(args: argparse.Namespace) -> None:
-    tables = merge_tables(load_custom_tables(args.tables)) if args.tables else None
-    session = _resolve_session_arg(args)
-    if args.scan:
-        site_map = json.loads(open(args.scan, encoding="utf-8").read())
+    project = _load_project_arg(args)
+    tables_path = _resolve_tables_arg(args, project)
+    tables = merge_tables(load_custom_tables(tables_path)) if tables_path else None
+    session = _resolve_session_arg(args, project)
+    scan_path = _resolve_scan_arg(args, project)
+    if scan_path:
+        site_map = json.loads(open(scan_path, encoding="utf-8").read())
         extractor = lambda url: extract_fields(
             url, headless=not args.headed, session=session
         )
         site = extract_site(site_map, extractor=extractor, include=args.include or None)
         payload = suggest_site(site, tables=tables)
     else:
-        if not args.url:
-            raise SystemExit("suggest: pass a URL or --scan <site-map.json>")
-        fields = extract_fields(args.url, headless=not args.headed, session=session)
+        url = args.url or (project.base_url if project else None)
+        if not url:
+            raise SystemExit(
+                "suggest: pass a URL, --scan <site-map.json>, or --project <project.json>"
+            )
+        fields = extract_fields(url, headless=not args.headed, session=session)
         items = []
         for field in fields:
             suggestions = suggest(field, tables=tables)
@@ -66,7 +83,7 @@ def _cmd_suggest(args: argparse.Namespace) -> None:
                 }
             )
         payload = {
-            "url": args.url,
+            "url": url,
             "field_count": len(fields),
             "fields": items,
         }
@@ -75,11 +92,12 @@ def _cmd_suggest(args: argparse.Namespace) -> None:
 
 
 def _cmd_capture(args: argparse.Namespace) -> None:
-    session = _resolve_session_arg(args)
+    project = _load_project_arg(args)
+    session = _resolve_session_arg(args, project)
     result = capture_page(
         args.url,
         args.output,
-        viewport=(args.width, args.height),
+        viewport=_resolve_viewport(args, project),
         full_page=not args.viewport_only,
         headless=not args.headed,
         session=session,
@@ -89,12 +107,13 @@ def _cmd_capture(args: argparse.Namespace) -> None:
 
 
 def _cmd_run(args: argparse.Namespace) -> None:
+    project = _load_project_arg(args)
     test = load_test(args.test)
-    session = _resolve_session_arg(args)
+    session = _resolve_session_arg(args, project)
     result = run_flow(
         test,
         args.out,
-        viewport=(args.width, args.height),
+        viewport=_resolve_viewport(args, project),
         headless=not args.headed,
         session=session,
     )
@@ -102,9 +121,16 @@ def _cmd_run(args: argparse.Namespace) -> None:
     sys.stdout.write("\n")
 
 
-def _resolve_session_arg(args: argparse.Namespace) -> str | None:
-    """Validate `--session` if provided; return the resolved path or None."""
+def _resolve_session_arg(
+    args: argparse.Namespace, project: Project | None = None
+) -> str | None:
+    """Validate `--session` if provided; return the resolved path or None.
+
+    Falls back to the project's `session` path when `--session` is not set.
+    """
     path = getattr(args, "session", None)
+    if not path and project is not None and project.session_resolved is not None:
+        path = str(project.session_resolved)
     if not path:
         return None
     try:
@@ -112,6 +138,57 @@ def _resolve_session_arg(args: argparse.Namespace) -> str | None:
     except SessionError as exc:
         raise SystemExit(f"--session: {exc}") from exc
     return path
+
+
+def _load_project_arg(args: argparse.Namespace) -> Project | None:
+    """Load a `--project` file if provided; otherwise return None."""
+    path = getattr(args, "project", None)
+    if not path:
+        return None
+    try:
+        return load_project(path)
+    except ProjectError as exc:
+        raise SystemExit(f"--project: {exc}") from exc
+
+
+def _resolve_viewport(
+    args: argparse.Namespace, project: Project | None
+) -> tuple[int, int]:
+    """Resolve width/height: explicit flags > project's first viewport > built-in default."""
+    w, h = args.width, args.height
+    if w is None and project is not None and project.viewports:
+        w = project.viewports[0].width
+    if h is None and project is not None and project.viewports:
+        h = project.viewports[0].height
+    return (w or DEFAULT_VIEWPORT[0], h or DEFAULT_VIEWPORT[1])
+
+
+def _resolve_scan_arg(
+    args: argparse.Namespace, project: Project | None
+) -> str | None:
+    path = getattr(args, "scan", None)
+    if not path and project is not None and project.scan_resolved is not None:
+        path = str(project.scan_resolved)
+    return path
+
+
+def _resolve_tables_arg(
+    args: argparse.Namespace, project: Project | None
+) -> str | None:
+    path = getattr(args, "tables", None)
+    if not path and project is not None and project.tables_resolved is not None:
+        path = str(project.tables_resolved)
+    return path
+
+
+def _resolve_baselines_arg(
+    value: str | None, project: Project | None
+) -> str | None:
+    if value:
+        return value
+    if project is not None and project.baselines_resolved is not None:
+        return str(project.baselines_resolved)
+    return None
 
 
 def _cmd_session(args: argparse.Namespace) -> None:
@@ -127,12 +204,13 @@ def _cmd_session(args: argparse.Namespace) -> None:
 
 
 def _cmd_report(args: argparse.Namespace) -> None:
+    project = _load_project_arg(args)
     data = json.loads(open(args.result, encoding="utf-8").read())
     masks = _parse_named_masks(args.mask or [])
     report = render_report(
         data,
         args.out,
-        baselines_dir=args.baselines,
+        baselines_dir=_resolve_baselines_arg(args.baselines, project),
         threshold=args.threshold,
         masks=masks or None,
     )
@@ -156,9 +234,15 @@ def _parse_named_masks(specs: list[str]) -> dict[str, list[MaskRegion]]:
 
 
 def _cmd_approve(args: argparse.Namespace) -> None:
+    project = _load_project_arg(args)
     data = json.loads(open(args.result, encoding="utf-8").read())
     captures = _split_csv(args.captures)
-    plan = plan_approval(data, args.baselines, capture_names=captures)
+    baselines = _resolve_baselines_arg(args.baselines, project)
+    if not baselines:
+        raise SystemExit(
+            "approve: --baselines is required (or set 'baselines' in --project)"
+        )
+    plan = plan_approval(data, baselines, capture_names=captures)
     result = apply_approval(plan, dry_run=args.dry_run)
     json.dump(result.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
@@ -174,6 +258,10 @@ def _split_csv(raw: str | None) -> list[str] | None:
 
 
 def _cmd_scan(args: argparse.Namespace) -> None:
+    project = _load_project_arg(args)
+    url = args.url or (project.base_url if project else None)
+    if not url:
+        raise SystemExit("scan: pass a URL or --project <project.json>")
     bounds = CrawlBounds(
         max_depth=args.max_depth,
         max_pages=args.max_pages,
@@ -181,10 +269,81 @@ def _cmd_scan(args: argparse.Namespace) -> None:
         respect_robots=not args.ignore_robots,
         rate_limit_seconds=args.rate_limit,
     )
-    session = _resolve_session_arg(args)
-    site = crawl(args.url, bounds, headless=not args.headed, session=session)
+    session = _resolve_session_arg(args, project)
+    site = crawl(url, bounds, headless=not args.headed, session=session)
     json.dump(site.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
+
+
+def _cmd_project_init(args: argparse.Namespace) -> None:
+    viewports = tuple(_parse_viewport_spec(spec) for spec in (args.viewport or []))
+    try:
+        project = init_project(
+            args.path,
+            name=args.name,
+            base_url=args.base_url,
+            viewports=viewports,
+            overwrite=args.force,
+        )
+    except ProjectError as exc:
+        raise SystemExit(f"project init: {exc}") from exc
+    payload = {
+        "path": str(Path(args.path).resolve()),
+        "project": project.to_dict(),
+    }
+    json.dump(payload, sys.stdout, indent=2, ensure_ascii=False)
+    sys.stdout.write("\n")
+
+
+def _cmd_project_show(args: argparse.Namespace) -> None:
+    try:
+        project = load_project(args.path)
+    except ProjectError as exc:
+        raise SystemExit(f"project show: {exc}") from exc
+    out = project.to_dict()
+    out["resolved"] = {
+        "source_dir": str(project.source_dir),
+        "session": _path_or_none(project.session_resolved),
+        "tables": _path_or_none(project.tables_resolved),
+        "scan": _path_or_none(project.scan_resolved),
+        "baselines": _path_or_none(project.baselines_resolved),
+        "tests": [str(p) for p in project.tests_resolved],
+    }
+    json.dump(out, sys.stdout, indent=2, ensure_ascii=False)
+    sys.stdout.write("\n")
+
+
+def _path_or_none(p: Path | None) -> str | None:
+    return str(p) if p is not None else None
+
+
+def _parse_viewport_spec(spec: str) -> ProjectViewport:
+    """Parse 'name:WIDTHxHEIGHT' (e.g. 'desktop:1280x800') into a ProjectViewport."""
+    if ":" not in spec:
+        raise SystemExit(
+            f"--viewport must be 'name:WIDTHxHEIGHT'; got {spec!r}"
+        )
+    name, dims = spec.split(":", 1)
+    name = name.strip()
+    if not name:
+        raise SystemExit(f"--viewport missing name in {spec!r}")
+    if "x" not in dims:
+        raise SystemExit(
+            f"--viewport dims must be WIDTHxHEIGHT; got {dims!r} in {spec!r}"
+        )
+    w_str, h_str = dims.split("x", 1)
+    try:
+        width = int(w_str)
+        height = int(h_str)
+    except ValueError as exc:
+        raise SystemExit(
+            f"--viewport width/height must be integers in {spec!r}"
+        ) from exc
+    if width <= 0 or height <= 0:
+        raise SystemExit(
+            f"--viewport width/height must be positive in {spec!r}"
+        )
+    return ProjectViewport(name=name, width=width, height=height)
 
 
 def _cmd_compare(args: argparse.Namespace) -> None:
@@ -201,6 +360,15 @@ def _cmd_compare(args: argparse.Namespace) -> None:
     sys.exit(0 if result.verdict == "pass" else 1)
 
 
+def _add_project_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--project",
+        default=None,
+        metavar="PATH",
+        help="Path to a Fuzzmark project JSON; supplies defaults for missing flags",
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="fuzzmark", description="Scan-first QA engine")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -209,7 +377,11 @@ def main(argv: list[str] | None = None) -> None:
         "extract",
         help="Extract form fields from a page (or every page in a scan)",
     )
-    extract.add_argument("url", nargs="?", help="Page URL; omit when using --scan")
+    extract.add_argument(
+        "url",
+        nargs="?",
+        help="Page URL; omit when using --scan or --project's base_url",
+    )
     extract.add_argument(
         "--scan",
         default=None,
@@ -229,13 +401,18 @@ def main(argv: list[str] | None = None) -> None:
         metavar="PATH",
         help="Replay a Playwright storage_state JSON for authenticated extraction",
     )
+    _add_project_arg(extract)
     extract.set_defaults(func=_cmd_extract)
 
     suggest_p = sub.add_parser(
         "suggest",
         help="Emit fuzzing suggestions per field (single URL or every page in a scan)",
     )
-    suggest_p.add_argument("url", nargs="?", help="Page URL; omit when using --scan")
+    suggest_p.add_argument(
+        "url",
+        nargs="?",
+        help="Page URL; omit when using --scan or --project's base_url",
+    )
     suggest_p.add_argument(
         "--scan",
         default=None,
@@ -261,6 +438,7 @@ def main(argv: list[str] | None = None) -> None:
         metavar="PATH",
         help="Replay a Playwright storage_state JSON for authenticated extraction",
     )
+    _add_project_arg(suggest_p)
     suggest_p.set_defaults(func=_cmd_suggest)
 
     capture = sub.add_parser(
@@ -268,8 +446,18 @@ def main(argv: list[str] | None = None) -> None:
     )
     capture.add_argument("url")
     capture.add_argument("output", help="Path to write the PNG screenshot to")
-    capture.add_argument("--width", type=int, default=1280, help="Viewport width (px)")
-    capture.add_argument("--height", type=int, default=800, help="Viewport height (px)")
+    capture.add_argument(
+        "--width",
+        type=int,
+        default=None,
+        help=f"Viewport width (px); falls back to --project's first viewport, then {DEFAULT_VIEWPORT[0]}",
+    )
+    capture.add_argument(
+        "--height",
+        type=int,
+        default=None,
+        help=f"Viewport height (px); falls back to --project's first viewport, then {DEFAULT_VIEWPORT[1]}",
+    )
     capture.add_argument(
         "--viewport-only",
         action="store_true",
@@ -282,6 +470,7 @@ def main(argv: list[str] | None = None) -> None:
         metavar="PATH",
         help="Replay a Playwright storage_state JSON for authenticated capture",
     )
+    _add_project_arg(capture)
     capture.set_defaults(func=_cmd_capture)
 
     run_p = sub.add_parser(
@@ -289,8 +478,18 @@ def main(argv: list[str] | None = None) -> None:
     )
     run_p.add_argument("test", help="Path to a Test JSON file")
     run_p.add_argument("--out", required=True, help="Directory to write screenshots into")
-    run_p.add_argument("--width", type=int, default=1280, help="Viewport width (px)")
-    run_p.add_argument("--height", type=int, default=800, help="Viewport height (px)")
+    run_p.add_argument(
+        "--width",
+        type=int,
+        default=None,
+        help=f"Viewport width (px); falls back to --project's first viewport, then {DEFAULT_VIEWPORT[0]}",
+    )
+    run_p.add_argument(
+        "--height",
+        type=int,
+        default=None,
+        help=f"Viewport height (px); falls back to --project's first viewport, then {DEFAULT_VIEWPORT[1]}",
+    )
     run_p.add_argument("--headed", action="store_true", help="Run the browser headed")
     run_p.add_argument(
         "--session",
@@ -298,6 +497,7 @@ def main(argv: list[str] | None = None) -> None:
         metavar="PATH",
         help="Replay a Playwright storage_state JSON for an authenticated run (Test JSON 'session' wins when set)",
     )
+    _add_project_arg(run_p)
     run_p.set_defaults(func=_cmd_run)
 
     report_p = sub.add_parser(
@@ -326,6 +526,7 @@ def main(argv: list[str] | None = None) -> None:
         metavar="CAPTURE_NAME:X,Y,W,H[,SOURCE]",
         help="Per-capture region to blank before scoring; repeatable",
     )
+    _add_project_arg(report_p)
     report_p.set_defaults(func=_cmd_report)
 
     approve = sub.add_parser(
@@ -335,8 +536,8 @@ def main(argv: list[str] | None = None) -> None:
     approve.add_argument("result", help="Path to a result JSON produced by `fuzzmark run`")
     approve.add_argument(
         "--baselines",
-        required=True,
-        help="Directory to write approved baseline PNGs into (created if missing)",
+        default=None,
+        help="Directory to write approved baseline PNGs into; falls back to --project's 'baselines'",
     )
     approve.add_argument(
         "--captures",
@@ -348,13 +549,18 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Plan the approval and print it without writing any files",
     )
+    _add_project_arg(approve)
     approve.set_defaults(func=_cmd_approve)
 
     scan = sub.add_parser(
         "scan",
         help="Crawl a base URL within bounds and emit a site map as JSON",
     )
-    scan.add_argument("url")
+    scan.add_argument(
+        "url",
+        nargs="?",
+        help="Base URL to crawl; omit when --project supplies base_url",
+    )
     scan.add_argument(
         "--max-depth", type=int, default=CrawlBounds.max_depth, help="Max link-hops from the start URL"
     )
@@ -387,7 +593,44 @@ def main(argv: list[str] | None = None) -> None:
         metavar="PATH",
         help="Replay a Playwright storage_state JSON for an authenticated crawl",
     )
+    _add_project_arg(scan)
     scan.set_defaults(func=_cmd_scan)
+
+    project_p = sub.add_parser(
+        "project",
+        help="Initialize or inspect a Fuzzmark project JSON file",
+    )
+    project_sub = project_p.add_subparsers(dest="project_command", required=True)
+
+    project_init = project_sub.add_parser(
+        "init", help="Write a starter project JSON file"
+    )
+    project_init.add_argument("path", help="Destination path for the project JSON")
+    project_init.add_argument(
+        "--name", required=True, help="Project name (non-empty)"
+    )
+    project_init.add_argument(
+        "--base-url", required=True, help="Base URL the target lives at"
+    )
+    project_init.add_argument(
+        "--viewport",
+        action="append",
+        default=None,
+        metavar="NAME:WIDTHxHEIGHT",
+        help="Add a viewport entry (e.g. 'desktop:1280x800'); repeatable",
+    )
+    project_init.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite the destination if it already exists",
+    )
+    project_init.set_defaults(func=_cmd_project_init)
+
+    project_show = project_sub.add_parser(
+        "show", help="Load a project JSON file and print it with resolved paths"
+    )
+    project_show.add_argument("path", help="Path to a project JSON file")
+    project_show.set_defaults(func=_cmd_project_show)
 
     session_p = sub.add_parser(
         "session",
