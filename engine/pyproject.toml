@@ -1,0 +1,21 @@
+[project]
+name = "fuzzmark"
+version = "0.1.0"
+description = "Scan-first visual-regression and form-fuzzing QA engine"
+requires-python = ">=3.10"
+dependencies = [
+    "playwright>=1.40",
+    "opencv-python-headless>=4.8",
+    "numpy>=1.24",
+    "scikit-image>=0.22",
+]
+
+[project.scripts]
+fuzzmark = "fuzzmark.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

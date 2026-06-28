@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+engine/.venv/
+build/
+dist/
+.DS_Store
+.idea/
+.vscode/
+*.png.diff
+
+.claude/settings.local.json
