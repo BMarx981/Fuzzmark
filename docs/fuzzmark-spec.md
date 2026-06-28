@@ -134,7 +134,7 @@ A **test** is a named flow. A **flow** is an ordered list of steps. Step kinds:
 
 The same flow with different field values is a different test. This is the core of how the user expresses "each test has these fields filled or left empty." Tests are saved per project and re-runnable.
 
-**Storage format.** Tests are stored as **JSON** — one human-readable, hand-editable file per test (or per suite). The format is the single source of truth: a user can edit a test in place in the app, edit the JSON directly in an editor, commit it to version control, or run it through the app, and all paths operate on the same file. The schema is stable and documented so direct editing is safe.
+**Storage format.** Tests are stored as **JSON** — one human-readable, hand-editable file per test (or per suite). The format is the single source of truth: a user can edit a test in place in the app, edit the JSON directly in an editor, commit it to version control, or run it through the app, and all paths operate on the same file. The schema is stable and documented so direct editing is safe — see [`test-json-schema.md`](test-json-schema.md) for the field-by-field reference.
 
 ### 5.5 Driver
 

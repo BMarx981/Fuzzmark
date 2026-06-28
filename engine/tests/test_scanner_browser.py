@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from fuzzmark.extractor import extract_site
 from fuzzmark.scanner import CrawlBounds, crawl
 
 pytestmark = pytest.mark.browser
@@ -53,3 +54,25 @@ def test_crawl_collects_page_titles(fixture_site_url: str) -> None:
     titles = {p.title for p in site.pages if p.title}
     assert "Site Index" in titles
     assert "About" in titles
+
+
+def test_extract_site_finds_form_on_contact_page(fixture_site_url: str) -> None:
+    """Scan → extract_site over the fixture isolates the contact form on contact.html."""
+    site = crawl(
+        fixture_site_url,
+        CrawlBounds(max_depth=3, max_pages=50, respect_robots=False),
+    )
+    out = extract_site(site.to_dict())
+
+    by_name = {Path(p["url"]).name: p for p in out["pages"]}
+    contact = by_name["contact.html"]
+    assert contact["field_count"] == 2
+    types = {f.get("type") for f in contact["fields"]}
+    assert "email" in types
+
+    other_pages_have_no_fields = all(
+        p["field_count"] == 0
+        for name, p in by_name.items()
+        if name != "contact.html"
+    )
+    assert other_pages_have_no_fields

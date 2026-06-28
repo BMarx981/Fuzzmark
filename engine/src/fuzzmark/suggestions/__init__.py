@@ -1,6 +1,7 @@
 """Rule-based fuzzing-value generation keyed off field type and validation metadata."""
 
 from .engine import suggest, suggest_all
+from .site import suggest_site
 from .models import (
     BOUNDARY,
     CATEGORIES,
@@ -16,6 +17,7 @@ from .models import (
 __all__ = [
     "suggest",
     "suggest_all",
+    "suggest_site",
     "Suggestion",
     "CATEGORIES",
     "EMPTY",

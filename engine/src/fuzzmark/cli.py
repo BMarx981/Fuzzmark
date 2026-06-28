@@ -10,43 +10,58 @@ from .baselines import apply_approval, plan_approval
 from .capture import capture_page
 from .compare import DEFAULT_THRESHOLD, MaskRegion, compare_images, parse_mask_spec
 from .driver import load_test, run_flow
-from .extractor import extract_fields
+from .extractor import extract_fields, extract_site
 from .report import render_report
 from .scanner import CrawlBounds, crawl
-from .suggestions import suggest
+from .suggestions import suggest, suggest_site
 
 
 def _cmd_extract(args: argparse.Namespace) -> None:
-    fields = extract_fields(args.url, headless=not args.headed)
-    payload = {
-        "url": args.url,
-        "field_count": len(fields),
-        "fields": [f.to_dict() for f in fields],
-    }
-    json.dump(payload, sys.stdout, indent=2)
+    if args.scan:
+        site_map = json.loads(open(args.scan, encoding="utf-8").read())
+        extractor = lambda url: extract_fields(url, headless=not args.headed)
+        payload = extract_site(site_map, extractor=extractor, include=args.include or None)
+    else:
+        if not args.url:
+            raise SystemExit("extract: pass a URL or --scan <site-map.json>")
+        fields = extract_fields(args.url, headless=not args.headed)
+        payload = {
+            "url": args.url,
+            "field_count": len(fields),
+            "fields": [f.to_dict() for f in fields],
+        }
+    json.dump(payload, sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
 
 
 def _cmd_suggest(args: argparse.Namespace) -> None:
-    fields = extract_fields(args.url, headless=not args.headed)
-    items = []
-    for field in fields:
-        suggestions = suggest(field)
-        items.append(
-            {
-                "selector": field.selector,
-                "kind": field.kind,
-                "type": field.type,
-                "label": field.label,
-                "suggestion_count": len(suggestions),
-                "suggestions": [s.to_dict() for s in suggestions],
-            }
-        )
-    payload = {
-        "url": args.url,
-        "field_count": len(fields),
-        "fields": items,
-    }
+    if args.scan:
+        site_map = json.loads(open(args.scan, encoding="utf-8").read())
+        extractor = lambda url: extract_fields(url, headless=not args.headed)
+        site = extract_site(site_map, extractor=extractor, include=args.include or None)
+        payload = suggest_site(site)
+    else:
+        if not args.url:
+            raise SystemExit("suggest: pass a URL or --scan <site-map.json>")
+        fields = extract_fields(args.url, headless=not args.headed)
+        items = []
+        for field in fields:
+            suggestions = suggest(field)
+            items.append(
+                {
+                    "selector": field.selector,
+                    "kind": field.kind,
+                    "type": field.type,
+                    "label": field.label,
+                    "suggestion_count": len(suggestions),
+                    "suggestions": [s.to_dict() for s in suggestions],
+                }
+            )
+        payload = {
+            "url": args.url,
+            "field_count": len(fields),
+            "fields": items,
+        }
     json.dump(payload, sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
 
@@ -153,15 +168,43 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="fuzzmark", description="Scan-first QA engine")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    extract = sub.add_parser("extract", help="Extract form fields from a page")
-    extract.add_argument("url")
+    extract = sub.add_parser(
+        "extract",
+        help="Extract form fields from a page (or every page in a scan)",
+    )
+    extract.add_argument("url", nargs="?", help="Page URL; omit when using --scan")
+    extract.add_argument(
+        "--scan",
+        default=None,
+        help="Path to a `fuzzmark scan` result JSON; extract from each page in it",
+    )
+    extract.add_argument(
+        "--include",
+        action="append",
+        default=None,
+        metavar="URL",
+        help="Restrict --scan extraction to this URL; repeatable",
+    )
     extract.add_argument("--headed", action="store_true", help="Run the browser headed")
     extract.set_defaults(func=_cmd_extract)
 
     suggest_p = sub.add_parser(
-        "suggest", help="Extract fields and emit fuzzing suggestions per field"
+        "suggest",
+        help="Emit fuzzing suggestions per field (single URL or every page in a scan)",
     )
-    suggest_p.add_argument("url")
+    suggest_p.add_argument("url", nargs="?", help="Page URL; omit when using --scan")
+    suggest_p.add_argument(
+        "--scan",
+        default=None,
+        help="Path to a `fuzzmark scan` result JSON; suggest for each page in it",
+    )
+    suggest_p.add_argument(
+        "--include",
+        action="append",
+        default=None,
+        metavar="URL",
+        help="Restrict --scan extraction to this URL; repeatable",
+    )
     suggest_p.add_argument("--headed", action="store_true", help="Run the browser headed")
     suggest_p.set_defaults(func=_cmd_suggest)
 
