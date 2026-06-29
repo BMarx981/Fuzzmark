@@ -16,6 +16,7 @@ from .extractor import extract_ctas, extract_fields, extract_site
 from .mobile import (
     SimctlError,
     capture_app as mobile_capture_app,
+    check_mobile_test,
     list_devices as mobile_list_devices,
     load_mobile_test,
     run_mobile_flow,
@@ -433,6 +434,37 @@ def _cmd_sim_run(args: argparse.Namespace) -> None:
         raise SystemExit(f"sim-run: {exc}") from exc
     json.dump(result.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
+
+
+def _cmd_sim_check(args: argparse.Namespace) -> None:
+    if not simctl_available():
+        raise SystemExit(
+            "sim-check: `xcrun simctl` not available; install Xcode command-line tools"
+        )
+    project = _load_project_arg(args)
+    try:
+        test = load_mobile_test(args.test)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"sim-check: {exc}") from exc
+    masks = _parse_named_masks(args.mask or [])
+    baselines = _resolve_baselines_arg(args.baselines, project)
+    report_dir = Path(args.report_out) if args.report_out else Path(args.out) / "report"
+    try:
+        check = check_mobile_test(
+            test,
+            args.out,
+            report_dir=report_dir,
+            baselines_dir=baselines,
+            threshold=args.threshold,
+            masks=masks or None,
+            launch_settle_seconds=args.settle,
+            stabilize_status_bar=not args.no_stabilize_status_bar,
+        )
+    except SimctlError as exc:
+        raise SystemExit(f"sim-check: {exc}") from exc
+    json.dump(check.report.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
+    sys.stdout.write("\n")
+    sys.exit(0 if check.passed else 1)
 
 
 def _cmd_compare(args: argparse.Namespace) -> None:
@@ -890,6 +922,53 @@ def main(argv: list[str] | None = None) -> None:
         help="Leave the live status bar untouched (default freezes time/battery/signal so consecutive captures are byte-identical)",
     )
     sim_run_p.set_defaults(func=_cmd_sim_run)
+
+    sim_check_p = sub.add_parser(
+        "sim-check",
+        help="Run a MobileTest, render its report, exit non-zero on any non-pass verdict",
+    )
+    sim_check_p.add_argument("test", help="Path to a MobileTest JSON file")
+    sim_check_p.add_argument(
+        "--out", required=True, help="Directory to write screenshots into"
+    )
+    sim_check_p.add_argument(
+        "--report-out",
+        default=None,
+        metavar="DIR",
+        help="Directory to write the HTML report into (default <out>/report)",
+    )
+    sim_check_p.add_argument(
+        "--baselines",
+        default=None,
+        metavar="DIR",
+        help="Approved-baselines directory; captures with no baseline fail the gate",
+    )
+    sim_check_p.add_argument(
+        "--threshold",
+        type=float,
+        default=DEFAULT_THRESHOLD,
+        help=f"SSIM threshold (default {DEFAULT_THRESHOLD})",
+    )
+    sim_check_p.add_argument(
+        "--mask",
+        action="append",
+        default=[],
+        metavar="CAPTURE:x,y,w,h[,source]",
+        help="Region to blank on both images before scoring; repeatable",
+    )
+    sim_check_p.add_argument(
+        "--settle",
+        type=float,
+        default=1.5,
+        help="Seconds to wait after a 'launch' step for the first frame (default 1.5)",
+    )
+    sim_check_p.add_argument(
+        "--no-stabilize-status-bar",
+        action="store_true",
+        help="Leave the live status bar untouched (default freezes time/battery/signal so consecutive captures are byte-identical)",
+    )
+    _add_project_arg(sim_check_p)
+    sim_check_p.set_defaults(func=_cmd_sim_check)
 
     args = parser.parse_args(argv)
     args.func(args)

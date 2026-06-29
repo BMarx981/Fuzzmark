@@ -5,6 +5,7 @@ because both backends emit PNGs.
 """
 
 from .capture import capture_app
+from .check import MobileCheckResult, check_mobile_test
 from .driver import run_mobile_flow
 from .flow import (
     CAPTURE,
@@ -42,6 +43,8 @@ from .simctl import (
 
 __all__ = [
     "capture_app",
+    "check_mobile_test",
+    "MobileCheckResult",
     "run_mobile_flow",
     "load_mobile_test",
     "parse_mobile_test",
