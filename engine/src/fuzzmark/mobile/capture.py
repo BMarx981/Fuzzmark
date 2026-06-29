@@ -10,6 +10,7 @@ from .simctl import (
     boot_device,
     install_app,
     launch_app,
+    override_status_bar,
     read_bundle_id,
     resolve_device,
     screenshot,
@@ -27,6 +28,7 @@ def capture_app(
     launch_args: Optional[list[str]] = None,
     settle_seconds: float = 1.5,
     terminate_after: bool = False,
+    stabilize_status_bar: bool = True,
 ) -> MobileCaptureResult:
     """Install `app_path` on a resolved iOS Simulator and capture its first frame.
 
@@ -46,6 +48,9 @@ def capture_app(
             first frame has rendered.
         terminate_after: If True, kill the app process after capture. The
             device is left booted — subsequent captures are fast that way.
+        stabilize_status_bar: When True (default), apply
+            `simctl status_bar override` before capturing so consecutive
+            captures don't differ on the live clock and signal indicators.
 
     Returns:
         A populated `MobileCaptureResult`. Raises `SimctlError` on any
@@ -60,6 +65,9 @@ def capture_app(
         prefer_booted=True,
     )
     boot_device(device.udid, wait_ready=True)
+
+    if stabilize_status_bar:
+        override_status_bar(device.udid)
 
     install_app(device.udid, app)
     launch_app(

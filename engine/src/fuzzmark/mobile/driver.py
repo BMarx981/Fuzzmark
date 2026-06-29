@@ -23,6 +23,7 @@ from .simctl import (
     boot_device,
     install_app,
     launch_app,
+    override_status_bar,
     read_bundle_id,
     resolve_device,
     screenshot,
@@ -38,6 +39,7 @@ def run_mobile_flow(
     out_dir: str | Path,
     *,
     launch_settle_seconds: float = 1.5,
+    stabilize_status_bar: bool = True,
 ) -> MobileRunResult:
     """Execute `test` and write per-capture PNGs into `out_dir`.
 
@@ -54,6 +56,11 @@ def run_mobile_flow(
             into. Created if missing.
         launch_settle_seconds: Time to wait after `launch` for the first frame
             to render. Override per-step waits via explicit `wait` steps.
+        stabilize_status_bar: When True (default), apply
+            `simctl status_bar override` before the flow runs so the live clock
+            and signal indicators don't tick between captures. Pass False to
+            leave the status bar live (useful when the test itself is checking
+            those indicators).
 
     Returns:
         A populated `MobileRunResult`. Raises `SimctlError` on any underlying
@@ -73,6 +80,9 @@ def run_mobile_flow(
         prefer_booted=True,
     )
     boot_device(device.udid, wait_ready=True)
+
+    if stabilize_status_bar:
+        override_status_bar(device.udid)
 
     if test.app:
         install_app(device.udid, test.app)

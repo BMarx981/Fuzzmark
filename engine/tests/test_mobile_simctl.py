@@ -163,3 +163,56 @@ def test_list_devices_parses_simctl_json(monkeypatch: pytest.MonkeyPatch) -> Non
     assert {d.udid for d in devices} == {"UDID-A", "UDID-B", "UDID-C"}
     booted = [d for d in devices if d.is_booted]
     assert len(booted) == 1 and booted[0].udid == "UDID-A"
+
+
+class TestStatusBarOverride:
+    """Capture the argv shape so a regression in the override flags is caught
+    without needing a real simulator."""
+
+    def _capture(self, monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+        calls: list[list[str]] = []
+
+        def fake_run(argv, *, timeout=60):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        monkeypatch.setattr(simctl, "_run", fake_run)
+        return calls
+
+    def test_default_overrides_pin_marketing_time_and_full_signal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._capture(monkeypatch)
+        simctl.override_status_bar("UDID-X")
+        assert len(calls) == 1
+        argv = calls[0]
+        assert argv[:5] == ["xcrun", "simctl", "status_bar", "UDID-X", "override"]
+        flags = dict(zip(argv[5::2], argv[6::2]))
+        assert flags["--time"] == "9:41"
+        assert flags["--batteryLevel"] == "100"
+        assert flags["--batteryState"] == "charged"
+        assert flags["--wifiMode"] == "active"
+        assert flags["--cellularMode"] == "active"
+
+    def test_empty_overrides_skips_the_call(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._capture(monkeypatch)
+        simctl.override_status_bar("UDID-X", overrides=())
+        assert calls == []
+
+    def test_custom_overrides_passed_through(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._capture(monkeypatch)
+        simctl.override_status_bar(
+            "UDID-X", overrides=(("--time", "12:34"),)
+        )
+        assert calls[0][-2:] == ["--time", "12:34"]
+
+    def test_clear_runs_clear_subcommand(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._capture(monkeypatch)
+        simctl.clear_status_bar("UDID-X")
+        assert calls == [["xcrun", "simctl", "status_bar", "UDID-X", "clear"]]

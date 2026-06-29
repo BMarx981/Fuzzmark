@@ -222,6 +222,48 @@ def terminate_app(udid: str, bundle_id: str) -> None:
         pass
 
 
+DEFAULT_STATUS_BAR_OVERRIDES: tuple[tuple[str, str], ...] = (
+    ("--time", "9:41"),
+    ("--dataNetwork", "wifi"),
+    ("--wifiMode", "active"),
+    ("--wifiBars", "3"),
+    ("--cellularMode", "active"),
+    ("--cellularBars", "4"),
+    ("--operatorName", "Fuzzmark"),
+    ("--batteryState", "charged"),
+    ("--batteryLevel", "100"),
+)
+
+
+def override_status_bar(
+    udid: str,
+    *,
+    overrides: tuple[tuple[str, str], ...] = DEFAULT_STATUS_BAR_OVERRIDES,
+) -> None:
+    """Freeze the iOS Simulator status bar so consecutive captures are byte-identical.
+
+    The default override pins the marketing time (9:41), full battery + signal,
+    and a stable operator name. Without it, the live clock and signal
+    indicators tick between captures and every baseline comparison reports a
+    spurious diff.
+
+    `overrides` is a sequence of `(flag, value)` pairs forwarded to
+    `simctl status_bar <udid> override`. Pass `()` to skip the override
+    entirely (the call still no-ops cleanly).
+    """
+    if not overrides:
+        return
+    argv: list[str] = ["xcrun", "simctl", "status_bar", udid, "override"]
+    for flag, value in overrides:
+        argv.extend([flag, value])
+    _run(argv, timeout=15)
+
+
+def clear_status_bar(udid: str) -> None:
+    """Drop any active status-bar override and return the bar to its live state."""
+    _run(["xcrun", "simctl", "status_bar", udid, "clear"], timeout=15)
+
+
 def screenshot(udid: str, output_path: str | Path) -> Path:
     """Write a PNG screenshot of the device's current frame and return the path."""
     path = Path(output_path)

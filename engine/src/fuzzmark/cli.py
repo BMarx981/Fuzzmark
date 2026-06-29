@@ -405,6 +405,7 @@ def _cmd_sim_capture(args: argparse.Namespace) -> None:
             bundle_id=args.bundle_id,
             settle_seconds=args.settle,
             terminate_after=args.terminate_after,
+            stabilize_status_bar=not args.no_stabilize_status_bar,
         )
     except SimctlError as exc:
         raise SystemExit(f"sim-capture: {exc}") from exc
@@ -422,7 +423,12 @@ def _cmd_sim_run(args: argparse.Namespace) -> None:
     except (OSError, ValueError) as exc:
         raise SystemExit(f"sim-run: {exc}") from exc
     try:
-        result = run_mobile_flow(test, args.out, launch_settle_seconds=args.settle)
+        result = run_mobile_flow(
+            test,
+            args.out,
+            launch_settle_seconds=args.settle,
+            stabilize_status_bar=not args.no_stabilize_status_bar,
+        )
     except SimctlError as exc:
         raise SystemExit(f"sim-run: {exc}") from exc
     json.dump(result.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
@@ -859,6 +865,11 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Kill the app process after capture (sim is left booted either way)",
     )
+    sim_capture_p.add_argument(
+        "--no-stabilize-status-bar",
+        action="store_true",
+        help="Leave the live status bar untouched (default freezes time/battery/signal so consecutive captures are byte-identical)",
+    )
     sim_capture_p.set_defaults(func=_cmd_sim_capture)
 
     sim_run_p = sub.add_parser(
@@ -872,6 +883,11 @@ def main(argv: list[str] | None = None) -> None:
         type=float,
         default=1.5,
         help="Seconds to wait after a 'launch' step for the first frame (default 1.5)",
+    )
+    sim_run_p.add_argument(
+        "--no-stabilize-status-bar",
+        action="store_true",
+        help="Leave the live status bar untouched (default freezes time/battery/signal so consecutive captures are byte-identical)",
     )
     sim_run_p.set_defaults(func=_cmd_sim_run)
 
