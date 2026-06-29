@@ -5,6 +5,21 @@ because both backends emit PNGs.
 """
 
 from .capture import capture_app
+from .driver import run_mobile_flow
+from .flow import (
+    CAPTURE,
+    LAUNCH,
+    OPENURL,
+    STEP_KINDS,
+    TERMINATE,
+    WAIT,
+    MobileCaptureArtifact,
+    MobileFlowStep,
+    MobileRunResult,
+    MobileTest,
+    load_mobile_test,
+    parse_mobile_test,
+)
 from .result import MobileCaptureResult
 from .simctl import (
     SimctlError,
@@ -23,7 +38,20 @@ from .simctl import (
 
 __all__ = [
     "capture_app",
+    "run_mobile_flow",
+    "load_mobile_test",
+    "parse_mobile_test",
+    "MobileTest",
+    "MobileFlowStep",
+    "MobileRunResult",
+    "MobileCaptureArtifact",
     "MobileCaptureResult",
+    "STEP_KINDS",
+    "LAUNCH",
+    "TERMINATE",
+    "OPENURL",
+    "WAIT",
+    "CAPTURE",
     "SimctlError",
     "Device",
     "boot_device",

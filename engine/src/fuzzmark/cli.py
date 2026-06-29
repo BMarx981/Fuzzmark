@@ -17,6 +17,8 @@ from .mobile import (
     SimctlError,
     capture_app as mobile_capture_app,
     list_devices as mobile_list_devices,
+    load_mobile_test,
+    run_mobile_flow,
     simctl_available,
 )
 from .project import Project, ProjectError, ProjectViewport, init_project, load_project
@@ -406,6 +408,23 @@ def _cmd_sim_capture(args: argparse.Namespace) -> None:
         )
     except SimctlError as exc:
         raise SystemExit(f"sim-capture: {exc}") from exc
+    json.dump(result.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
+    sys.stdout.write("\n")
+
+
+def _cmd_sim_run(args: argparse.Namespace) -> None:
+    if not simctl_available():
+        raise SystemExit(
+            "sim-run: `xcrun simctl` not available; install Xcode command-line tools"
+        )
+    try:
+        test = load_mobile_test(args.test)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"sim-run: {exc}") from exc
+    try:
+        result = run_mobile_flow(test, args.out, launch_settle_seconds=args.settle)
+    except SimctlError as exc:
+        raise SystemExit(f"sim-run: {exc}") from exc
     json.dump(result.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
 
@@ -841,6 +860,20 @@ def main(argv: list[str] | None = None) -> None:
         help="Kill the app process after capture (sim is left booted either way)",
     )
     sim_capture_p.set_defaults(func=_cmd_sim_capture)
+
+    sim_run_p = sub.add_parser(
+        "sim-run",
+        help="Execute a MobileTest JSON against an iOS Simulator and write per-step screenshots",
+    )
+    sim_run_p.add_argument("test", help="Path to a MobileTest JSON file")
+    sim_run_p.add_argument("--out", required=True, help="Directory to write screenshots into")
+    sim_run_p.add_argument(
+        "--settle",
+        type=float,
+        default=1.5,
+        help="Seconds to wait after a 'launch' step for the first frame (default 1.5)",
+    )
+    sim_run_p.set_defaults(func=_cmd_sim_run)
 
     args = parser.parse_args(argv)
     args.func(args)
