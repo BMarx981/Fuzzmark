@@ -30,6 +30,7 @@ from ..project import (
     add_test_path,
     init_project,
     load_project,
+    set_base_url,
     set_scan_path,
 )
 from ..report import Report, render_report
@@ -104,6 +105,20 @@ def _projects_init(payload: dict) -> dict:
             viewports=viewports,
             overwrite=overwrite,
         )
+    except ProjectError as exc:
+        raise RouteError(400, str(exc)) from exc
+    return _project_payload(path, project)
+
+
+def _projects_set_base_url(payload: dict) -> dict:
+    """Update a project's `base_url` and return the reparsed project."""
+    path = _require_str(payload, "path")
+    base_url = _require_str(payload, "base_url")
+    project_file = Path(path)
+    if not project_file.exists():
+        raise RouteError(400, f"project file not found: {project_file}")
+    try:
+        project = set_base_url(project_file, base_url)
     except ProjectError as exc:
         raise RouteError(400, str(exc)) from exc
     return _project_payload(path, project)
@@ -190,11 +205,14 @@ def _projects_pages(payload: dict) -> dict:
     for raw in site_map.get("pages") or ():
         if not isinstance(raw, dict):
             continue
+        raw_ctas = raw.get("ctas")
+        ctas = list(raw_ctas) if isinstance(raw_ctas, list) else []
         pages.append(
             {
                 "url": raw.get("url"),
                 "depth": raw.get("depth"),
                 "title": raw.get("title"),
+                "ctas": ctas,
                 "error": raw.get("error"),
             }
         )
@@ -661,6 +679,7 @@ ROUTES: dict[tuple[str, str], Route] = {
     ("GET", "/api/health"): _health,
     ("POST", "/api/projects/load"): _projects_load,
     ("POST", "/api/projects/init"): _projects_init,
+    ("POST", "/api/projects/base_url"): _projects_set_base_url,
     ("POST", "/api/projects/scan"): _projects_scan,
     ("POST", "/api/projects/scan/save"): _projects_scan_save,
     ("POST", "/api/projects/pages"): _projects_pages,

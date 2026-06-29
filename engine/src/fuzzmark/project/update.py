@@ -37,6 +37,25 @@ def set_scan_path(project_file: str | Path, scan: str | None) -> Project:
     return project
 
 
+def set_base_url(project_file: str | Path, base_url: str) -> Project:
+    """Set the project's `base_url` field and rewrite the file.
+
+    Returns the reparsed `Project` so callers see the same validation the
+    loader applies (non-empty string).
+    """
+    path = Path(project_file)
+    raw = _read_raw(path)
+    base_url = base_url.strip()
+    if not base_url:
+        raise ProjectError("'base_url' must be a non-empty string")
+    raw["base_url"] = base_url
+    project = parse_project(raw, source_dir=path.parent)
+    path.write_text(
+        json.dumps(raw, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    return project
+
+
 def add_test_path(project_file: str | Path, test_path: str) -> Project:
     """Append `test_path` to the project's `tests` list and rewrite the file.
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 
+from ..extractor.models import CTA
+
 
 @dataclass(frozen=True)
 class CrawlBounds:
@@ -30,6 +32,7 @@ class Page:
     parent_url: Optional[str]
     title: Optional[str] = None
     links: list[str] = field(default_factory=list)
+    ctas: list[CTA] = field(default_factory=list)
     error: Optional[str] = None
 
     def to_dict(self) -> dict:

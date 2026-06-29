@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'theme/fuzzmark_tokens.dart';
+
 const _accent = Color(0xFF4A7CFF);
 const _monoFamily = 'monospace';
 
@@ -12,9 +14,12 @@ ThemeData _buildTheme(Brightness brightness) {
     seedColor: _accent,
     brightness: brightness,
   );
+  final fuzz =
+      brightness == Brightness.dark ? FuzzColors.dark : FuzzColors.light;
   return ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
+    scaffoldBackgroundColor: fuzz.surface0,
     visualDensity: VisualDensity.adaptivePlatformDensity,
     textTheme: Typography.material2021(platform: TargetPlatform.macOS)
         .black
@@ -22,7 +27,7 @@ ThemeData _buildTheme(Brightness brightness) {
           bodyColor: scheme.onSurface,
           displayColor: scheme.onSurface,
         ),
-    extensions: const [FuzzmarkColors(mono: _monoFamily)],
+    extensions: [const FuzzmarkColors(mono: _monoFamily), fuzz],
   );
 }
 

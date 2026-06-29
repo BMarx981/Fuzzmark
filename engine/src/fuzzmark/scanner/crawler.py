@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from typing import Callable
 from urllib.robotparser import RobotFileParser
 
+from ..extractor.ctas import _EXTRACT_CTAS_JS, _to_cta
+from ..extractor.models import CTA
 from .exclude import DEFAULT_EXCLUDE_RULES, ExcludeRule, is_excluded
 from .models import CrawlBounds, Page, SiteMap, SkippedUrl
 from .normalize import absolutize, is_http_like, normalize_url, same_origin
@@ -28,6 +30,7 @@ class FetchResult:
 
     title: str | None = None
     links: list[str] = field(default_factory=list)
+    ctas: list[CTA] = field(default_factory=list)
     error: str | None = None
 
 
@@ -83,6 +86,7 @@ def bfs_crawl(
             depth=depth,
             parent_url=parent,
             title=result.title,
+            ctas=list(result.ctas),
             error=result.error,
         )
 
@@ -157,7 +161,12 @@ def _browser_fetcher(
         try:
             page.goto(url, wait_until="networkidle", timeout=timeout_ms)
             data = page.evaluate(_LINK_JS)
-            return FetchResult(title=data.get("title"), links=list(data.get("links") or []))
+            raw_ctas = page.evaluate(_EXTRACT_CTAS_JS)
+            return FetchResult(
+                title=data.get("title"),
+                links=list(data.get("links") or []),
+                ctas=[_to_cta(item) for item in (raw_ctas or [])],
+            )
         except Exception as exc:
             return FetchResult(error=str(exc))
         finally:
