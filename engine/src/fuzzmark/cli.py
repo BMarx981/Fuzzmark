@@ -13,6 +13,12 @@ from .capture import capture_page
 from .compare import DEFAULT_THRESHOLD, MaskRegion, compare_images, parse_mask_spec
 from .driver import load_test, run_flow
 from .extractor import extract_ctas, extract_fields, extract_site
+from .mobile import (
+    SimctlError,
+    capture_app as mobile_capture_app,
+    list_devices as mobile_list_devices,
+    simctl_available,
+)
 from .project import Project, ProjectError, ProjectViewport, init_project, load_project
 from .report import render_report
 from .scanner import CrawlBounds, crawl
@@ -367,6 +373,41 @@ def _parse_viewport_spec(spec: str) -> ProjectViewport:
             f"--viewport width/height must be positive in {spec!r}"
         )
     return ProjectViewport(name=name, width=width, height=height)
+
+
+def _cmd_sim_devices(args: argparse.Namespace) -> None:
+    if not simctl_available():
+        raise SystemExit(
+            "sim-devices: `xcrun simctl` not available; install Xcode command-line tools"
+        )
+    try:
+        devices = mobile_list_devices(available_only=not args.all)
+    except SimctlError as exc:
+        raise SystemExit(f"sim-devices: {exc}") from exc
+    payload = {"devices": [d.__dict__ for d in devices]}
+    json.dump(payload, sys.stdout, indent=2, ensure_ascii=False)
+    sys.stdout.write("\n")
+
+
+def _cmd_sim_capture(args: argparse.Namespace) -> None:
+    if not simctl_available():
+        raise SystemExit(
+            "sim-capture: `xcrun simctl` not available; install Xcode command-line tools"
+        )
+    try:
+        result = mobile_capture_app(
+            args.app,
+            args.output,
+            device_name=args.device,
+            runtime_contains=args.runtime,
+            bundle_id=args.bundle_id,
+            settle_seconds=args.settle,
+            terminate_after=args.terminate_after,
+        )
+    except SimctlError as exc:
+        raise SystemExit(f"sim-capture: {exc}") from exc
+    json.dump(result.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
+    sys.stdout.write("\n")
 
 
 def _cmd_compare(args: argparse.Namespace) -> None:
@@ -754,6 +795,52 @@ def main(argv: list[str] | None = None) -> None:
         help="Region to blank on both images before scoring; repeatable",
     )
     compare.set_defaults(func=_cmd_compare)
+
+    sim_devices_p = sub.add_parser(
+        "sim-devices",
+        help="List iOS Simulator devices visible to `xcrun simctl`",
+    )
+    sim_devices_p.add_argument(
+        "--all",
+        action="store_true",
+        help="Include unavailable devices (defaults to available-only)",
+    )
+    sim_devices_p.set_defaults(func=_cmd_sim_devices)
+
+    sim_capture_p = sub.add_parser(
+        "sim-capture",
+        help="Install a .app on an iOS Simulator, launch it, and screenshot the first frame",
+    )
+    sim_capture_p.add_argument("app", help="Path to a built .app bundle (simulator slice)")
+    sim_capture_p.add_argument("output", help="Path to write the PNG screenshot to")
+    sim_capture_p.add_argument(
+        "--device",
+        default=None,
+        help='Simulator name (e.g. "iPhone 16"); defaults to the latest-runtime device of any name',
+    )
+    sim_capture_p.add_argument(
+        "--runtime",
+        default=None,
+        metavar="SUBSTR",
+        help='Case-insensitive runtime substring (e.g. "iOS-26") to constrain device picking',
+    )
+    sim_capture_p.add_argument(
+        "--bundle-id",
+        default=None,
+        help="Override the bundle id read from the app's Info.plist",
+    )
+    sim_capture_p.add_argument(
+        "--settle",
+        type=float,
+        default=1.5,
+        help="Seconds to wait after launch before screenshotting (default 1.5)",
+    )
+    sim_capture_p.add_argument(
+        "--terminate-after",
+        action="store_true",
+        help="Kill the app process after capture (sim is left booted either way)",
+    )
+    sim_capture_p.set_defaults(func=_cmd_sim_capture)
 
     args = parser.parse_args(argv)
     args.func(args)

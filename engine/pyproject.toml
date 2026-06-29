@@ -24,4 +24,5 @@ where = ["src"]
 testpaths = ["tests"]
 markers = [
     "browser: requires a running Chromium; skipped unless --run-browser is passed",
+    "simulator: requires Xcode + iOS Simulator on macOS; skipped unless --run-sim is passed",
 ]

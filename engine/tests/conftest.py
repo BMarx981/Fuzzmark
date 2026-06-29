@@ -14,17 +14,28 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Run tests marked `browser` (requires a Playwright Chromium install).",
     )
+    parser.addoption(
+        "--run-sim",
+        action="store_true",
+        default=False,
+        help="Run tests marked `simulator` (requires Xcode + iOS Simulator on macOS).",
+    )
 
 
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    if config.getoption("--run-browser"):
+    skips: list[tuple[str, pytest.MarkDecorator]] = []
+    if not config.getoption("--run-browser"):
+        skips.append(("browser", pytest.mark.skip(reason="needs --run-browser")))
+    if not config.getoption("--run-sim"):
+        skips.append(("simulator", pytest.mark.skip(reason="needs --run-sim")))
+    if not skips:
         return
-    skip = pytest.mark.skip(reason="needs --run-browser")
     for item in items:
-        if "browser" in item.keywords:
-            item.add_marker(skip)
+        for keyword, marker in skips:
+            if keyword in item.keywords:
+                item.add_marker(marker)
 
 
 @pytest.fixture(scope="session")
