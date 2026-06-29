@@ -79,18 +79,24 @@ class ScannedPage {
     required this.depth,
     required this.title,
     required this.error,
+    required this.ctas,
   });
 
   final String url;
   final int depth;
   final String? title;
   final String? error;
+  final List<ExtractedCta> ctas;
 
   factory ScannedPage.fromJson(Map<String, dynamic> json) => ScannedPage(
         url: json['url'] as String,
         depth: (json['depth'] as num).toInt(),
         title: json['title'] as String?,
         error: json['error'] as String?,
+        ctas: (json['ctas'] as List? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(ExtractedCta.fromJson)
+            .toList(growable: false),
       );
 }
 

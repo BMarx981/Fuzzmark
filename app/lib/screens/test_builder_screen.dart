@@ -92,10 +92,12 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
               projectPath: widget.project.path,
               fields: fields,
             );
-      final ctas = await widget.api.extractCtas(
-        projectPath: widget.project.path,
-        url: page.url,
-      );
+      final ctas = page.ctas.isNotEmpty
+          ? page.ctas
+          : await widget.api.extractCtas(
+              projectPath: widget.project.path,
+              url: page.url,
+            );
       if (!mounted) return;
       setState(() {
         _fields = fields;
@@ -291,6 +293,7 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
           ),
+          trailing: p.ctas.isEmpty ? null : _ctaBadge(context, p.ctas.length),
           enabled: !_extracting && !_saving,
           onTap: () => _pickPage(p),
         );
@@ -347,6 +350,23 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: children,
+    );
+  }
+
+  Widget _ctaBadge(BuildContext context, int count) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: scheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        count == 1 ? '1 CTA' : '$count CTAs',
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: scheme.onSecondaryContainer,
+            ),
+      ),
     );
   }
 
