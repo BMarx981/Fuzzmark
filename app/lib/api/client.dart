@@ -706,6 +706,17 @@ class FuzzmarkApi {
     return FuzzmarkProject.fromJson(res);
   }
 
+  Future<FuzzmarkProject> setBaseUrl({
+    required String projectPath,
+    required String baseUrl,
+  }) async {
+    final res = await _post('/api/projects/base_url', {
+      'path': projectPath,
+      'base_url': baseUrl,
+    });
+    return FuzzmarkProject.fromJson(res);
+  }
+
   Future<Map<String, dynamic>> _get(String path) async {
     final res = await _client.get(baseUri.replace(path: path));
     return _decode(res);

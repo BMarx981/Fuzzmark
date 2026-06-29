@@ -24,6 +24,9 @@ class _ScanScreenState extends State<ScanScreen> {
   final _maxDepth = TextEditingController(text: '3');
   final _maxPages = TextEditingController(text: '50');
   final _rateLimit = TextEditingController(text: '0.0');
+  late final TextEditingController _baseUrl =
+      TextEditingController(text: widget.project.baseUrl);
+  late String _persistedBaseUrl = widget.project.baseUrl;
   bool _ignoreRobots = false;
   bool _allowCrossOrigin = false;
   bool _showBounds = false;
@@ -39,6 +42,7 @@ class _ScanScreenState extends State<ScanScreen> {
     _maxDepth.dispose();
     _maxPages.dispose();
     _rateLimit.dispose();
+    _baseUrl.dispose();
     super.dispose();
   }
 
@@ -70,6 +74,11 @@ class _ScanScreenState extends State<ScanScreen> {
   Future<void> _runScan() async {
     final bounds = _readBounds();
     if (bounds == null) return;
+    final url = _baseUrl.text.trim();
+    if (url.isEmpty) {
+      _showError('Base URL must not be empty');
+      return;
+    }
     setState(() {
       _scanning = true;
       _error = null;
@@ -77,6 +86,15 @@ class _ScanScreenState extends State<ScanScreen> {
       _selected.clear();
     });
     try {
+      if (url != _persistedBaseUrl) {
+        final updated = await widget.api.setBaseUrl(
+          projectPath: widget.project.path,
+          baseUrl: url,
+        );
+        if (!mounted) return;
+        widget.onProjectUpdated(updated);
+        setState(() => _persistedBaseUrl = updated.baseUrl);
+      }
       final result = await widget.api.runScan(
         projectPath: widget.project.path,
         bounds: bounds,
@@ -207,21 +225,32 @@ class _ScanScreenState extends State<ScanScreen> {
 
   Widget _header(BuildContext context) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                widget.project.baseUrl,
+              TextField(
+                controller: _baseUrl,
+                enabled: !(_scanning || _saving),
+                decoration: const InputDecoration(
+                  labelText: 'Base URL',
+                  isDense: true,
+                ),
                 style: const TextStyle(
                   fontFamily: 'monospace',
                   fontSize: 13,
                 ),
+                keyboardType: TextInputType.url,
+                autocorrect: false,
+                onChanged: (_) => setState(() {}),
               ),
-              const SizedBox(height: 2),
+              const SizedBox(height: 4),
               Text(
-                'Crawl the project base URL to discover pages.',
+                _baseUrl.text.trim() == _persistedBaseUrl
+                    ? 'Crawl the project base URL to discover pages.'
+                    : 'URL will be saved to the project when you start the scan.',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
@@ -229,10 +258,14 @@ class _ScanScreenState extends State<ScanScreen> {
             ],
           ),
         ),
-        FilledButton.icon(
-          onPressed: (_scanning || _saving) ? null : _runScan,
-          icon: const Icon(Icons.travel_explore),
-          label: Text(_result == null ? 'Start scan' : 'Re-scan'),
+        const SizedBox(width: 12),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: FilledButton.icon(
+            onPressed: (_scanning || _saving) ? null : _runScan,
+            icon: const Icon(Icons.travel_explore),
+            label: Text(_result == null ? 'Start scan' : 'Re-scan'),
+          ),
         ),
       ],
     );
