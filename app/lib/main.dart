@@ -45,6 +45,12 @@ class _FuzzmarkAppState extends State<FuzzmarkApp> {
     setState(() => _open = project);
   }
 
+  Future<void> _switchProject(FuzzmarkProject project) async {
+    await widget.recents.add(project.path);
+    if (!mounted) return;
+    setState(() => _open = project);
+  }
+
   void _closeProject() {
     setState(() => _open = null);
   }
@@ -80,6 +86,7 @@ class _FuzzmarkAppState extends State<FuzzmarkApp> {
                   api: _api,
                   project: _open!,
                   onClose: _closeProject,
+                  onSwitchProject: _switchProject,
                 );
         },
       ),

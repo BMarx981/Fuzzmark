@@ -11,11 +11,13 @@ class ProjectScreen extends StatefulWidget {
     required this.api,
     required this.project,
     required this.onClose,
+    required this.onSwitchProject,
   });
 
   final FuzzmarkApi api;
   final FuzzmarkProject project;
   final VoidCallback onClose;
+  final Future<void> Function(FuzzmarkProject) onSwitchProject;
 
   @override
   State<ProjectScreen> createState() => _ProjectScreenState();
@@ -32,6 +34,7 @@ class _ProjectScreenState extends State<ProjectScreen> {
           project: _project,
           onClose: () => Navigator.of(context).pop(),
           onProjectUpdated: (p) => setState(() => _project = p),
+          onSwitchProject: widget.onSwitchProject,
         ),
       ),
     );

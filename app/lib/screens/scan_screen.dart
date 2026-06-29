@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
@@ -9,12 +10,14 @@ class ScanScreen extends StatefulWidget {
     required this.project,
     required this.onClose,
     required this.onProjectUpdated,
+    required this.onSwitchProject,
   });
 
   final FuzzmarkApi api;
   final FuzzmarkProject project;
   final VoidCallback onClose;
   final ValueChanged<FuzzmarkProject> onProjectUpdated;
+  final Future<void> Function(FuzzmarkProject) onSwitchProject;
 
   @override
   State<ScanScreen> createState() => _ScanScreenState();
@@ -143,6 +146,38 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
+  Future<void> _saveAsNewProject() async {
+    final draft = await showDialog<_SaveAsDraft>(
+      context: context,
+      builder: (_) => _SaveAsDialog(
+        initialName: widget.project.name,
+        initialBaseUrl: _baseUrl.text.trim().isEmpty
+            ? widget.project.baseUrl
+            : _baseUrl.text.trim(),
+      ),
+    );
+    if (draft == null) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final created = await widget.api.initProject(
+        path: draft.path,
+        name: draft.name,
+        baseUrl: draft.baseUrl,
+      );
+      if (!mounted) return;
+      await widget.onSwitchProject(created);
+    } on EngineApiException catch (e) {
+      _setError(e.message);
+    } catch (e) {
+      _setError(e.toString());
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   void _setError(String message) {
     if (!mounted) return;
     setState(() => _error = message);
@@ -261,10 +296,23 @@ class _ScanScreenState extends State<ScanScreen> {
         const SizedBox(width: 12),
         Padding(
           padding: const EdgeInsets.only(top: 8),
-          child: FilledButton.icon(
-            onPressed: (_scanning || _saving) ? null : _runScan,
-            icon: const Icon(Icons.travel_explore),
-            label: Text(_result == null ? 'Start scan' : 'Re-scan'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              FilledButton.icon(
+                onPressed: (_scanning || _saving) ? null : _runScan,
+                icon: const Icon(Icons.travel_explore),
+                label: Text(_result == null ? 'Start scan' : 'Re-scan'),
+              ),
+              if (_baseUrl.text.trim() != _persistedBaseUrl) ...[
+                const SizedBox(height: 6),
+                TextButton.icon(
+                  onPressed: (_scanning || _saving) ? null : _saveAsNewProject,
+                  icon: const Icon(Icons.save_as, size: 18),
+                  label: const Text('Save as new project…'),
+                ),
+              ],
+            ],
           ),
         ),
       ],
@@ -466,6 +514,174 @@ class _ScanScreenState extends State<ScanScreen> {
               color: scheme.onSurfaceVariant,
             ),
       ),
+    );
+  }
+}
+
+class _SaveAsDraft {
+  _SaveAsDraft({required this.path, required this.name, required this.baseUrl});
+  final String path;
+  final String name;
+  final String baseUrl;
+}
+
+class _SaveAsDialog extends StatefulWidget {
+  const _SaveAsDialog({required this.initialName, required this.initialBaseUrl});
+
+  final String initialName;
+  final String initialBaseUrl;
+
+  @override
+  State<_SaveAsDialog> createState() => _SaveAsDialogState();
+}
+
+class _SaveAsDialogState extends State<_SaveAsDialog> {
+  final _form = GlobalKey<FormState>();
+  late final _name = TextEditingController(text: widget.initialName);
+  late final _baseUrl = TextEditingController(text: widget.initialBaseUrl);
+  final _parentDir = TextEditingController();
+  final _folderName = TextEditingController();
+  final _filename = TextEditingController(text: 'project.json');
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _baseUrl.dispose();
+    _parentDir.dispose();
+    _folderName.dispose();
+    _filename.dispose();
+    super.dispose();
+  }
+
+  Future<void> _chooseParent() async {
+    final dir = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Choose a parent folder',
+    );
+    if (dir == null) return;
+    setState(() => _parentDir.text = dir);
+  }
+
+  String? _validateNotEmpty(String? v) =>
+      (v == null || v.trim().isEmpty) ? 'Required' : null;
+
+  String? _validateSegment(String? v) {
+    if (v == null || v.trim().isEmpty) return 'Required';
+    final t = v.trim();
+    if (t.contains('/') || t.contains('\\')) return 'No slashes';
+    return null;
+  }
+
+  String get _computedPath {
+    final parent = _parentDir.text.trim();
+    final folder = _folderName.text.trim();
+    final file = _filename.text.trim();
+    if (parent.isEmpty || folder.isEmpty || file.isEmpty) return '';
+    final sep = parent.endsWith('/') || parent.endsWith('\\') ? '' : '/';
+    return '$parent$sep$folder/$file';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Save as new project'),
+      content: SizedBox(
+        width: 520,
+        child: Form(
+          key: _form,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextFormField(
+                controller: _name,
+                decoration: const InputDecoration(labelText: 'Name'),
+                validator: _validateNotEmpty,
+                autofocus: true,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _baseUrl,
+                decoration: const InputDecoration(labelText: 'Base URL'),
+                validator: _validateNotEmpty,
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _parentDir,
+                      decoration: const InputDecoration(
+                        labelText: 'Parent folder',
+                        hintText: '/path/to/parent',
+                      ),
+                      validator: _validateNotEmpty,
+                      onChanged: (_) => setState(() {}),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.folder_open),
+                    tooltip: 'Choose parent folder',
+                    onPressed: _chooseParent,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _folderName,
+                      decoration: const InputDecoration(
+                        labelText: 'New folder name',
+                        hintText: 'my-project',
+                      ),
+                      validator: _validateSegment,
+                      onChanged: (_) => setState(() {}),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _filename,
+                      decoration: const InputDecoration(labelText: 'File name'),
+                      validator: _validateSegment,
+                      onChanged: (_) => setState(() {}),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _computedPath.isEmpty
+                    ? 'The folder will be created if it does not exist.'
+                    : _computedPath,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontFamily: 'monospace',
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (!_form.currentState!.validate()) return;
+            Navigator.of(context).pop(_SaveAsDraft(
+              path: _computedPath,
+              name: _name.text.trim(),
+              baseUrl: _baseUrl.text.trim(),
+            ));
+          },
+          child: const Text('Create'),
+        ),
+      ],
     );
   }
 }
