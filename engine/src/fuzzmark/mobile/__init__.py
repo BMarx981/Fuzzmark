@@ -17,6 +17,7 @@ from .flow import (
     MobileFlowStep,
     MobileRunResult,
     MobileTest,
+    device_viewport_label,
     load_mobile_test,
     parse_mobile_test,
 )
@@ -46,6 +47,7 @@ __all__ = [
     "MobileRunResult",
     "MobileCaptureArtifact",
     "MobileCaptureResult",
+    "device_viewport_label",
     "STEP_KINDS",
     "LAUNCH",
     "TERMINATE",

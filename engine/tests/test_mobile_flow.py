@@ -13,8 +13,11 @@ from fuzzmark.mobile.flow import (
     OPENURL,
     TERMINATE,
     WAIT,
+    MobileCaptureArtifact,
     MobileFlowStep,
+    MobileRunResult,
     MobileTest,
+    device_viewport_label,
     load_mobile_test,
     parse_mobile_test,
 )
@@ -202,3 +205,66 @@ def test_missing_name_rejected() -> None:
 def test_top_level_must_be_object() -> None:
     with pytest.raises(ValueError, match="must be a JSON object"):
         parse_mobile_test([])  # type: ignore[arg-type]
+
+
+class TestDeviceViewportLabel:
+    def test_slugifies_spaces_and_punctuation(self) -> None:
+        assert device_viewport_label("iPhone 17e", "iOS-26.5") == "iPhone-17e_iOS-26-5"
+
+    def test_collapses_runs_of_separators(self) -> None:
+        assert (
+            device_viewport_label("iPad  Pro (11-inch)", "com.apple.CoreSimulator.SimRuntime.iOS-26-5")
+            == "iPad-Pro-11-inch_com-apple-CoreSimulator-SimRuntime-iOS-26-5"
+        )
+
+    def test_empty_runtime_uses_device_only(self) -> None:
+        assert device_viewport_label("iPhone 17e", "") == "iPhone-17e"
+
+    def test_fully_empty_falls_back_to_device_sentinel(self) -> None:
+        assert device_viewport_label("", "") == "device"
+
+
+class TestMobileCaptureArtifactDict:
+    def test_omits_viewport_when_none(self) -> None:
+        out = MobileCaptureArtifact(
+            name="a", step_index=0, screenshot_path="/x.png"
+        ).to_dict()
+        assert out == {"name": "a", "step_index": 0, "screenshot_path": "/x.png"}
+
+    def test_includes_viewport_when_set(self) -> None:
+        out = MobileCaptureArtifact(
+            name="a", step_index=2, screenshot_path="/x.png", viewport="iPhone_iOS"
+        ).to_dict()
+        assert out["viewport"] == "iPhone_iOS"
+
+
+class TestMobileRunResultDict:
+    def test_omits_none_bundle_and_viewport(self) -> None:
+        out = MobileRunResult(
+            test_name="t",
+            device_udid="U",
+            device_name="iPhone",
+            runtime="iOS-26",
+        ).to_dict()
+        assert "bundle_id" not in out
+        assert "viewport" not in out
+        assert out["captures"] == []
+
+    def test_serializes_captures_via_to_dict(self) -> None:
+        result = MobileRunResult(
+            test_name="t",
+            device_udid="U",
+            device_name="iPhone",
+            runtime="iOS",
+            bundle_id="com.x",
+            viewport="iPhone_iOS",
+            captures=[
+                MobileCaptureArtifact(
+                    name="a", step_index=0, screenshot_path="/x.png", viewport="iPhone_iOS"
+                ),
+            ],
+        )
+        out = result.to_dict()
+        assert out["bundle_id"] == "com.x"
+        assert out["viewport"] == "iPhone_iOS"
+        assert out["captures"][0]["viewport"] == "iPhone_iOS"

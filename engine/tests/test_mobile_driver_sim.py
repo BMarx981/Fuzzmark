@@ -14,6 +14,7 @@ if sys.platform != "darwin":
 
 from fuzzmark.mobile import (  # noqa: E402
     MobileTest,
+    device_viewport_label,
     parse_mobile_test,
     run_mobile_flow,
     simctl_available,
@@ -89,6 +90,35 @@ def test_run_mobile_flow_openurl_via_safari(
     # Frames differ once the URL has loaded; this guards against the openurl
     # step being silently dropped.
     assert before != after
+
+
+def test_run_mobile_flow_tags_viewport_and_nests_screenshot(
+    _simctl_present: None, tmp_path: Path
+) -> None:
+    """Captures inherit the device viewport tag and land under `<out>/<viewport>/`,
+    matching the baseline-store layout that `fuzzmark report` and `approve`
+    consume."""
+    test = parse_mobile_test(
+        {
+            "name": "safari-viewport-tag",
+            "bundle_id": SAFARI_BUNDLE_ID,
+            "flow": [
+                {"kind": "launch"},
+                {"kind": "wait", "seconds": 0.5},
+                {"kind": "capture", "name": "launched"},
+                {"kind": "terminate"},
+            ],
+        }
+    )
+    result = run_mobile_flow(test, tmp_path)
+
+    expected = device_viewport_label(result.device_name, result.runtime)
+    assert result.viewport == expected
+    cap = result.captures[0]
+    assert cap.viewport == expected
+    out = Path(cap.screenshot_path)
+    assert out.parent == tmp_path / expected
+    assert out.exists()
 
 
 def test_run_mobile_flow_capture_name_with_unsafe_chars(

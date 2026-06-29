@@ -15,6 +15,7 @@ from .flow import (
     OPENURL,
     TERMINATE,
     WAIT,
+    device_viewport_label,
 )
 from .simctl import (
     SimctlError,
@@ -40,10 +41,17 @@ def run_mobile_flow(
 ) -> MobileRunResult:
     """Execute `test` and write per-capture PNGs into `out_dir`.
 
+    Screenshots land at `<out_dir>/<viewport>/<safe-capture-name>.png` where
+    `viewport` is `device_viewport_label(device.name, device.runtime)`. This
+    mirrors the multi-viewport layout the web driver writes and lines up with
+    the baseline store's `<baselines>/<viewport>/<name>.png` convention so the
+    same MobileTest run against multiple devices keeps captures + baselines
+    cleanly partitioned.
+
     Args:
         test: A validated `MobileTest` (see `flow.load_mobile_test`).
-        out_dir: Directory to write `<safe-capture-name>.png` files into. Created
-            if missing.
+        out_dir: Directory to write `<viewport>/<safe-capture-name>.png` files
+            into. Created if missing.
         launch_settle_seconds: Time to wait after `launch` for the first frame
             to render. Override per-step waits via explicit `wait` steps.
 
@@ -69,12 +77,17 @@ def run_mobile_flow(
     if test.app:
         install_app(device.udid, test.app)
 
+    viewport = device_viewport_label(device.name, device.runtime)
+    viewport_dir = out / viewport
+    viewport_dir.mkdir(parents=True, exist_ok=True)
+
     result = MobileRunResult(
         test_name=test.name,
         device_udid=device.udid,
         device_name=device.name,
         runtime=device.runtime,
         bundle_id=bundle_id,
+        viewport=viewport,
     )
 
     for index, step in enumerate(test.flow):
@@ -106,12 +119,13 @@ def run_mobile_flow(
         elif step.kind == CAPTURE:
             assert step.name is not None
             filename = _safe_filename(step.name) + ".png"
-            path = screenshot(device.udid, out / filename)
+            path = screenshot(device.udid, viewport_dir / filename)
             result.captures.append(
                 MobileCaptureArtifact(
                     name=step.name,
                     step_index=index,
                     screenshot_path=str(path),
+                    viewport=viewport,
                 )
             )
         else:  # pragma: no cover  (parser already restricts to STEP_KINDS)

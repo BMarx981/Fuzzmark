@@ -8,7 +8,8 @@ external WebDriverAgent / Appium dependency is required.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -72,14 +73,27 @@ class MobileTest:
 
 @dataclass(frozen=True)
 class MobileCaptureArtifact:
-    """A screenshot produced by a mobile `capture` step."""
+    """A screenshot produced by a mobile `capture` step.
+
+    `viewport` is a per-device label (see `device_viewport_label`); it lets the
+    report and baseline pipelines group multi-device runs and nest baselines
+    under `<baselines>/<viewport>/<name>.png` automatically.
+    """
 
     name: str
     step_index: int
     screenshot_path: str
+    viewport: Optional[str] = None
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        out: dict = {
+            "name": self.name,
+            "step_index": self.step_index,
+            "screenshot_path": self.screenshot_path,
+        }
+        if self.viewport is not None:
+            out["viewport"] = self.viewport
+        return out
 
 
 @dataclass
@@ -91,10 +105,41 @@ class MobileRunResult:
     device_name: str
     runtime: str
     bundle_id: Optional[str] = None
+    viewport: Optional[str] = None
     captures: list[MobileCaptureArtifact] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        out: dict = {
+            "test_name": self.test_name,
+            "device_udid": self.device_udid,
+            "device_name": self.device_name,
+            "runtime": self.runtime,
+            "captures": [c.to_dict() for c in self.captures],
+        }
+        if self.bundle_id is not None:
+            out["bundle_id"] = self.bundle_id
+        if self.viewport is not None:
+            out["viewport"] = self.viewport
+        return out
+
+
+_SLUG = re.compile(r"[^A-Za-z0-9]+")
+
+
+def device_viewport_label(device_name: str, runtime: str) -> str:
+    """Slugify a (device, runtime) pair into a stable per-device viewport label.
+
+    The label is used as a subdirectory under both the run's output directory
+    (so screenshots land at `<out>/<viewport>/<name>.png`) and the baselines
+    directory (so multi-device runs keep their baselines apart). The slug is
+    URL-safe and filesystem-safe: collapses non-alphanumerics to '-' and
+    strips leading/trailing separators.
+    """
+    name_slug = _SLUG.sub("-", device_name).strip("-")
+    runtime_slug = _SLUG.sub("-", runtime).strip("-")
+    if name_slug and runtime_slug:
+        return f"{name_slug}_{runtime_slug}"
+    return name_slug or runtime_slug or "device"
 
 
 def load_mobile_test(path: str | Path) -> MobileTest:
