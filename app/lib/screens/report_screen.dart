@@ -40,6 +40,7 @@ class _ReportScreenState extends State<ReportScreen> {
   String? _error;
   RunReport? _report;
   final Set<String> _selected = <String>{};
+  final Set<String> _verdictFilter = <String>{};
 
   @override
   void initState() {
@@ -183,8 +184,11 @@ class _ReportScreenState extends State<ReportScreen> {
         message: 'The engine did not return a report for this run.',
       );
     }
-    final entries = [...report.entries]
+    final allSorted = [...report.entries]
       ..sort((a, b) => _sortKey(a).compareTo(_sortKey(b)));
+    final entries = _verdictFilter.isEmpty
+        ? allSorted
+        : allSorted.where((e) => _verdictFilter.contains(e.verdict)).toList();
     final canApprove = report.baselinesDir != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -214,29 +218,36 @@ class _ReportScreenState extends State<ReportScreen> {
         ),
         const SizedBox(height: FuzzSpace.md),
         Expanded(
-          child: ListView(
-            children: [
-              for (final e in entries)
-                _EntryCard(
-                  entry: e,
-                  selected: _selected.contains(e.name),
-                  approveEnabled: canApprove && !_approving,
-                  onSelected: (v) {
-                    setState(() {
-                      if (v) {
-                        _selected.add(e.name);
-                      } else {
-                        _selected.remove(e.name);
-                      }
-                    });
-                  },
+          child: entries.isEmpty
+              ? Center(
+                  child: Text(
+                    'No entries match the active filter.',
+                    style: FuzzText.body.copyWith(color: c.textMuted),
+                  ),
+                )
+              : ListView(
+                  children: [
+                    for (final e in entries)
+                      _EntryCard(
+                        entry: e,
+                        selected: _selected.contains(e.name),
+                        approveEnabled: canApprove && !_approving,
+                        onSelected: (v) {
+                          setState(() {
+                            if (v) {
+                              _selected.add(e.name);
+                            } else {
+                              _selected.remove(e.name);
+                            }
+                          });
+                        },
+                      ),
+                    if (report.hasErrors) ...[
+                      const SizedBox(height: 8),
+                      _ErrorsPanel(report: report),
+                    ],
+                  ],
                 ),
-              if (report.hasErrors) ...[
-                const SizedBox(height: 8),
-                _ErrorsPanel(report: report),
-              ],
-            ],
-          ),
         ),
       ],
     );
@@ -246,6 +257,7 @@ class _ReportScreenState extends State<ReportScreen> {
       (_verdictOrder[e.verdict] ?? 99) * 1000 + e.stepIndex;
 
   Widget _summary(BuildContext context, RunReport report) {
+    final c = context.fuzz;
     final counts = report.verdictCounts;
     final keys = counts.keys.toList()
       ..sort((a, b) =>
@@ -253,8 +265,30 @@ class _ReportScreenState extends State<ReportScreen> {
     return Wrap(
       spacing: 8,
       runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        for (final k in keys) _verdictChip(context, k, counts[k]!),
+        for (final k in keys)
+          _verdictToggleChip(
+            context,
+            k,
+            counts[k]!,
+            selected: _verdictFilter.contains(k),
+            anyFilterActive: _verdictFilter.isNotEmpty,
+            onToggle: () {
+              setState(() {
+                if (!_verdictFilter.add(k)) _verdictFilter.remove(k);
+              });
+            },
+          ),
+        if (_verdictFilter.isNotEmpty)
+          TextButton.icon(
+            onPressed: () => setState(_verdictFilter.clear),
+            icon: const Icon(Icons.filter_alt_off, size: 14),
+            label: Text(
+              'Clear filter',
+              style: FuzzText.label.copyWith(color: c.textSecondary),
+            ),
+          ),
       ],
     );
   }
@@ -292,6 +326,44 @@ Widget _verdictChip(BuildContext context, String verdict, int count) {
       '$verdict $count',
       style: FuzzText.caption
           .copyWith(color: p.fg, fontWeight: FontWeight.w500),
+    ),
+  );
+}
+
+Widget _verdictToggleChip(
+  BuildContext context,
+  String verdict,
+  int count, {
+  required bool selected,
+  required bool anyFilterActive,
+  required VoidCallback onToggle,
+}) {
+  final c = context.fuzz;
+  final p = _verdictPalette(context, verdict);
+  final dimmed = anyFilterActive && !selected;
+  return Material(
+    color: Colors.transparent,
+    borderRadius: const BorderRadius.all(FuzzSpace.controlRadius),
+    child: InkWell(
+      onTap: onToggle,
+      borderRadius: const BorderRadius.all(FuzzSpace.controlRadius),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+        decoration: BoxDecoration(
+          color: dimmed ? c.surface1 : p.bg,
+          borderRadius: const BorderRadius.all(FuzzSpace.controlRadius),
+          border: selected
+              ? Border.all(color: p.fg, width: 1.2)
+              : Border.all(color: Colors.transparent, width: 1.2),
+        ),
+        child: Text(
+          '$verdict $count',
+          style: FuzzText.caption.copyWith(
+            color: dimmed ? c.textMuted : p.fg,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ),
     ),
   );
 }
