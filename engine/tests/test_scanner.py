@@ -5,10 +5,12 @@ No browser, no network. The BFS is exercised with a stub fetcher.
 
 from __future__ import annotations
 
+import threading
 from urllib.robotparser import RobotFileParser
 
 import pytest
 
+from fuzzmark.jobs import JobCancelled
 from fuzzmark.scanner import (
     CrawlBounds,
     DEFAULT_EXCLUDE_RULES,
@@ -234,3 +236,88 @@ class TestBfsCrawl:
             sleep=sleeps.append,
         )
         assert sleeps == [0.25]
+
+
+class TestBfsCrawlEvents:
+    def test_emits_started_then_page_found_for_each_visit(self):
+        pages = {
+            "http://x/": _r("/a"),
+            "http://x/a": _r(),
+        }
+        events: list[dict] = []
+        bfs_crawl(
+            "http://x/",
+            CrawlBounds(max_depth=5, max_pages=50),
+            _StubFetcher(pages),
+            on_event=events.append,
+        )
+        kinds = [e["event"] for e in events]
+        assert kinds[0] == "started"
+        assert events[0]["base_url"] == "http://x/"
+        assert events[0]["max_depth"] == 5
+        page_events = [e for e in events if e["event"] == "page_found"]
+        assert [e["url"] for e in page_events] == ["http://x/", "http://x/a"]
+        assert page_events[0]["depth"] == 0
+        assert page_events[1]["depth"] == 1
+
+    def test_emits_page_skipped_with_reason(self):
+        pages = {"http://x/": _r("/a", "/b"), "http://x/a": _r(), "http://x/b": _r()}
+        events: list[dict] = []
+        bfs_crawl(
+            "http://x/",
+            CrawlBounds(max_depth=5, max_pages=2),
+            _StubFetcher(pages),
+            on_event=events.append,
+        )
+        skipped = [e for e in events if e["event"] == "page_skipped"]
+        assert [e["reason"] for e in skipped] == ["max-pages"]
+
+    def test_cancel_before_loop_raises_immediately(self):
+        pages = {"http://x/": _r("/a"), "http://x/a": _r()}
+        cancel = threading.Event()
+        cancel.set()
+        with pytest.raises(JobCancelled):
+            bfs_crawl(
+                "http://x/",
+                CrawlBounds(max_depth=5, max_pages=50),
+                _StubFetcher(pages),
+                cancel=cancel,
+            )
+
+    def test_cancel_between_pages_stops_crawl(self):
+        pages = {
+            "http://x/": _r("/a", "/b"),
+            "http://x/a": _r(),
+            "http://x/b": _r(),
+        }
+        cancel = threading.Event()
+        events: list[dict] = []
+
+        def _on_event(evt: dict) -> None:
+            events.append(evt)
+            if evt.get("event") == "page_found" and evt.get("url") == "http://x/a":
+                cancel.set()
+
+        with pytest.raises(JobCancelled):
+            bfs_crawl(
+                "http://x/",
+                CrawlBounds(max_depth=5, max_pages=50),
+                _StubFetcher(pages),
+                on_event=_on_event,
+                cancel=cancel,
+            )
+
+        found_urls = [e["url"] for e in events if e["event"] == "page_found"]
+        # The crawl ran the root and /a, then aborted before /b.
+        assert "http://x/" in found_urls
+        assert "http://x/a" in found_urls
+        assert "http://x/b" not in found_urls
+
+    def test_no_on_event_callback_still_works(self):
+        pages = {"http://x/": _r()}
+        site = bfs_crawl(
+            "http://x/",
+            CrawlBounds(max_depth=1, max_pages=10),
+            _StubFetcher(pages),
+        )
+        assert len(site.pages) == 1

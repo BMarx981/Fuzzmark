@@ -10,18 +10,33 @@ Two layers:
 
 from __future__ import annotations
 
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Optional
 from urllib.robotparser import RobotFileParser
 
 from ..extractor.ctas import _EXTRACT_CTAS_JS, _to_cta
 from ..extractor.models import CTA
+from ..jobs import JobCancelled
 from .exclude import DEFAULT_EXCLUDE_RULES, ExcludeRule, is_excluded
 from .models import CrawlBounds, Page, SiteMap, SkippedUrl
 from .normalize import absolutize, is_http_like, normalize_url, same_origin
 from .robots import fetch_robots, is_allowed
+
+
+EventCallback = Callable[[dict], None]
+
+
+def _emit(on_event: Optional[EventCallback], event: dict) -> None:
+    if on_event is not None:
+        on_event(event)
+
+
+def _check_cancel(cancel: Optional[threading.Event]) -> None:
+    if cancel is not None and cancel.is_set():
+        raise JobCancelled()
 
 
 @dataclass
@@ -45,11 +60,17 @@ def bfs_crawl(
     robots: RobotFileParser | None = None,
     exclude_rules: tuple[ExcludeRule, ...] = DEFAULT_EXCLUDE_RULES,
     sleep: Callable[[float], None] = time.sleep,
+    on_event: Optional[EventCallback] = None,
+    cancel: Optional[threading.Event] = None,
 ) -> SiteMap:
     """Walk `start_url` in BFS order subject to `bounds`.
 
     Returns a SiteMap with one Page per visited URL plus a SkippedUrl entry
     per URL the crawl reached but did not enter (with the reason).
+
+    `on_event` (optional) receives `started`, `page_found`, and `page_skipped`
+    events as the crawl progresses. `cancel` (optional) is polled before each
+    frontier dequeue; setting it raises `JobCancelled`.
     """
     start_norm = normalize_url(start_url)
     site = SiteMap(base_url=start_norm, bounds=bounds)
@@ -58,21 +79,38 @@ def bfs_crawl(
     seen: set[str] = {start_norm}
     visit_idx = 0
 
+    _emit(
+        on_event,
+        {
+            "event": "started",
+            "base_url": start_norm,
+            "max_depth": bounds.max_depth,
+            "max_pages": bounds.max_pages,
+        },
+    )
+
     while frontier:
+        _check_cancel(cancel)
         url, depth, parent = frontier.popleft()
 
         if len(site.pages) >= bounds.max_pages:
             site.skipped.append(SkippedUrl(url=url, reason="max-pages", parent_url=parent))
+            _emit(on_event, {"event": "page_skipped", "url": url, "reason": "max-pages"})
             continue
 
         if bounds.respect_robots and not is_allowed(robots, url, bounds.user_agent):
             site.skipped.append(SkippedUrl(url=url, reason="robots", parent_url=parent))
+            _emit(on_event, {"event": "page_skipped", "url": url, "reason": "robots"})
             continue
 
         excluded_by = is_excluded(url, exclude_rules)
         if excluded_by is not None:
             site.skipped.append(
                 SkippedUrl(url=url, reason=f"exclude:{excluded_by}", parent_url=parent)
+            )
+            _emit(
+                on_event,
+                {"event": "page_skipped", "url": url, "reason": f"exclude:{excluded_by}"},
             )
             continue
 
@@ -104,6 +142,17 @@ def bfs_crawl(
             page.links = child_links
 
         site.pages.append(page)
+        _emit(
+            on_event,
+            {
+                "event": "page_found",
+                "url": url,
+                "depth": depth,
+                "title": result.title,
+                "error": result.error,
+                "cta_count": len(result.ctas),
+            },
+        )
 
     return site
 
@@ -196,12 +245,15 @@ def crawl(
     headless: bool = True,
     robots: RobotFileParser | None = None,
     session: str | None = None,
+    on_event: Optional[EventCallback] = None,
+    cancel: Optional[threading.Event] = None,
 ) -> SiteMap:
     """Crawl `base_url` under `bounds` with a real Chromium browser.
 
     When `bounds.respect_robots` is on and no `robots` parser is supplied,
     robots.txt is fetched and parsed before the crawl begins. When `session`
     is a path to a Playwright storage_state file, the crawl runs authenticated.
+    `on_event` / `cancel` are forwarded to `bfs_crawl`.
     """
     bounds = bounds or CrawlBounds()
     if robots is None and bounds.respect_robots:
@@ -211,6 +263,13 @@ def crawl(
         timeout_ms=timeout_ms, headless=headless, session=session
     )
     try:
-        return bfs_crawl(base_url, bounds, fetcher, robots=robots)
+        return bfs_crawl(
+            base_url,
+            bounds,
+            fetcher,
+            robots=robots,
+            on_event=on_event,
+            cancel=cancel,
+        )
     finally:
         fetcher.close()

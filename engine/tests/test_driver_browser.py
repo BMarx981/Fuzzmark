@@ -5,6 +5,7 @@ Skipped unless `pytest --run-browser` is passed.
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,7 @@ from fuzzmark.driver import (
     Viewport,
     run_flow,
 )
+from fuzzmark.jobs import JobCancelled
 
 pytestmark = pytest.mark.browser
 
@@ -176,3 +178,59 @@ def test_viewport_matrix_writes_one_capture_per_viewport(
         Path(desktop.screenshot_path).read_bytes()
         != Path(mobile.screenshot_path).read_bytes()
     )
+
+
+def test_run_emits_step_and_capture_events(
+    tmp_path: Path, fixture_form_url: str
+) -> None:
+    """The runner emits started → step_started/finished → capture for each step."""
+    flow = Test(
+        name="emits",
+        flow=[
+            FlowStep(kind=VISIT, url=fixture_form_url),
+            FlowStep(kind=CAPTURE, name="home"),
+        ],
+    )
+    events: list[dict] = []
+    run_flow(flow, tmp_path / "captures", on_event=events.append)
+
+    kinds = [e["event"] for e in events]
+    assert kinds[0] == "started"
+    assert events[0]["test_name"] == "emits"
+    assert events[0]["total_steps"] == 2
+    # Every step has paired started/finished, and the capture step fires a capture event.
+    assert kinds.count("step_started") == 2
+    assert kinds.count("step_finished") == 2
+    capture_events = [e for e in events if e["event"] == "capture"]
+    assert [c["name"] for c in capture_events] == ["home"]
+    assert Path(capture_events[0]["screenshot_path"]).exists()
+
+
+def test_run_cancel_between_steps_raises_jobcancelled(
+    tmp_path: Path, fixture_form_url: str
+) -> None:
+    """Setting the cancel event before the next step aborts the run."""
+    flow = Test(
+        name="abort",
+        flow=[
+            FlowStep(kind=VISIT, url=fixture_form_url),
+            FlowStep(kind=CAPTURE, name="should-not-run"),
+        ],
+    )
+    cancel = threading.Event()
+    events: list[dict] = []
+
+    def _on_event(evt: dict) -> None:
+        events.append(evt)
+        # As soon as the visit step finishes, request cancel.
+        if evt.get("event") == "step_finished" and evt.get("index") == 0:
+            cancel.set()
+
+    with pytest.raises(JobCancelled):
+        run_flow(flow, tmp_path / "captures", on_event=_on_event, cancel=cancel)
+
+    # Visit step ran to completion; capture step never started.
+    kinds = [e["event"] for e in events]
+    assert "step_started" in kinds
+    assert kinds.count("step_started") == 1
+    assert all(e["event"] != "capture" for e in events)
