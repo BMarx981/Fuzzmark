@@ -27,7 +27,7 @@ class RunScreen extends StatefulWidget {
 
 class _RunScreenState extends State<RunScreen> {
   bool _running = false;
-  bool _headed = false;
+  bool _headed = true;
   String? _error;
   RunResult? _result;
 
@@ -129,9 +129,30 @@ class _RunScreenState extends State<RunScreen> {
                     ),
                     Row(
                       children: [
-                        Text('Headed',
-                            style:
-                                FuzzText.label.copyWith(color: c.textSecondary)),
+                        Tooltip(
+                          message: _headed
+                              ? 'A visible Chromium window opens so you can '
+                                  'watch the run. Clicks are slowed slightly '
+                                  'so they are easy to follow.'
+                              : 'The run is headless — faster, but you cannot '
+                                  'see what is happening.',
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                _headed
+                                    ? Icons.visibility
+                                    : Icons.visibility_off,
+                                size: 16,
+                                color: c.textSecondary,
+                              ),
+                              const SizedBox(width: 6),
+                              Text('Watch run',
+                                  style: FuzzText.label
+                                      .copyWith(color: c.textSecondary)),
+                            ],
+                          ),
+                        ),
                         Switch(
                           value: _headed,
                           onChanged: _running

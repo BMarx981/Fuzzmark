@@ -677,11 +677,12 @@ class TestTestsRunRoute:
         return path, body["tests"][0]
 
     def _stub_run(self, captured: dict, run_dir_capture: dict) -> object:
-        def fake(test, output_dir, *, viewport, headless, session):
+        def fake(test, output_dir, *, viewport, headless, session, slow_mo_ms=0):
             captured["test_name"] = test.name
             captured["viewport"] = viewport
             captured["headless"] = headless
             captured["session"] = session
+            captured["slow_mo_ms"] = slow_mo_ms
             run_dir_capture["dir"] = Path(output_dir)
             screenshot = Path(output_dir) / "home.png"
             screenshot.parent.mkdir(parents=True, exist_ok=True)
@@ -719,6 +720,7 @@ class TestTestsRunRoute:
         assert captured["viewport"] == (1024, 768)
         assert captured["headless"] is True
         assert captured["session"] is None
+        assert captured["slow_mo_ms"] == 0
         assert run_dir_capture["dir"] == tmp_path / "runs" / "smoke"
         assert body["result"]["test_name"] == "smoke"
         assert body["result"]["captures"][0]["name"] == "home"
@@ -743,6 +745,7 @@ class TestTestsRunRoute:
             {"path": path, "test": test_rel, "headed": True},
         )
         assert captured["headless"] is False
+        assert captured["slow_mo_ms"] == 250
 
     def test_rejects_test_outside_project(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

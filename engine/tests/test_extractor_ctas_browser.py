@@ -137,3 +137,53 @@ def test_heuristic_suppresses_child_inside_recorded_wrapper(fixture_ctas_url: st
     # Inner span and icon must NOT be emitted as separate CTAs.
     assert _by_id(ctas, "wrapper-onclick-icon") is None
     assert _by_id(ctas, "wrapper-onclick-label") is None
+
+
+def test_no_id_links_produce_unambiguous_selectors(tmp_path) -> None:
+    """Regression: links without id/name must yield selectors that match
+    exactly one element in document order so the driver can click them.
+
+    Previously the extractor emitted `a:nth-of-type(N)` against a
+    document-order index, which CSS interprets as position-among-siblings
+    and so usually matched zero elements — Locator.click then timed out.
+    """
+    from playwright.sync_api import sync_playwright
+
+    html = tmp_path / "nav.html"
+    html.write_text(
+        """<!doctype html>
+        <html><body>
+          <nav>
+            <ul>
+              <li><a href="/home">Home</a></li>
+              <li><a href="/about">About | CareerMoves</a></li>
+              <li><a href="/pricing">Pricing</a></li>
+            </ul>
+          </nav>
+          <footer>
+            <a href="/legal">Legal</a>
+          </footer>
+        </body></html>
+        """,
+        encoding="utf-8",
+    )
+    url = html.as_uri()
+
+    ctas = extract_ctas(url)
+    by_label = {c.label: c for c in ctas if c.kind == "link"}
+    assert set(by_label) == {"Home", "About | CareerMoves", "Pricing", "Legal"}
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        try:
+            page = browser.new_context().new_page()
+            page.goto(url, wait_until="domcontentloaded")
+            for label, cta in by_label.items():
+                locator = page.locator(cta.selector)
+                assert locator.count() == 1, (
+                    f"selector {cta.selector!r} for {label!r} matched "
+                    f"{locator.count()} elements (expected exactly 1)"
+                )
+                assert (locator.text_content() or "").strip() == label
+        finally:
+            browser.close()

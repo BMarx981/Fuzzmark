@@ -366,12 +366,22 @@ def _projects_tests_run(payload: dict) -> dict:
 
     session = project.session_resolved
     viewport = _resolve_viewport(project)
+    headed = bool(payload.get("headed", False))
+    slow_mo_raw = payload.get("slow_mo_ms")
+    if slow_mo_raw is None:
+        slow_mo_ms = 250 if headed else 0
+    else:
+        try:
+            slow_mo_ms = max(0, int(slow_mo_raw))
+        except (TypeError, ValueError) as exc:
+            raise RouteError(400, f"'slow_mo_ms' must be an integer: {exc}") from exc
     try:
         result = _run_flow(
             test,
             run_dir,
             viewport=viewport,
-            headless=not bool(payload.get("headed", False)),
+            headless=not headed,
+            slow_mo_ms=slow_mo_ms,
             session=str(session) if session is not None else None,
         )
     except Exception as exc:  # noqa: BLE001 — surfaces as 500 with a tidy message

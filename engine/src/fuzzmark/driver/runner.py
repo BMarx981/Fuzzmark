@@ -32,6 +32,25 @@ from .models import (
 _CONSOLE_LEVELS_TRACKED = {"error", "warning"}
 
 
+def _scroll_into_view(locator, *, timeout_ms: int) -> None:
+    """Pull the element into the viewport before acting on it.
+
+    Playwright's click/fill already auto-scroll, but doing it explicitly
+    (a) makes the scroll visible to a human watching a headed run, and
+    (b) surfaces "element not attached / not visible" errors up front
+    rather than waiting the full action timeout.
+    """
+    from playwright.sync_api import (
+        Error as PlaywrightError,
+        TimeoutError as PlaywrightTimeoutError,
+    )
+
+    try:
+        locator.scroll_into_view_if_needed(timeout=min(3000, timeout_ms))
+    except (PlaywrightTimeoutError, PlaywrightError):
+        pass
+
+
 def _settle(page, *, timeout_ms: int) -> None:
     """Best-effort wait for the page to finish loading subresources.
 
@@ -59,6 +78,7 @@ def run_flow(
     wait_until: str = "domcontentloaded",
     timeout_ms: int = 15000,
     headless: bool = True,
+    slow_mo_ms: int = 0,
     session: str | None = None,
 ) -> RunResult:
     """Drive `test` against a fresh browser and return a `RunResult`.
@@ -89,7 +109,10 @@ def run_flow(
     captures: list[CaptureArtifact] = []
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=headless)
+        browser = pw.chromium.launch(
+            headless=headless,
+            slow_mo=slow_mo_ms if slow_mo_ms > 0 else 0,
+        )
         try:
             for vp in viewports:
                 vp_out = out_dir / vp.name if tag_with_viewport else out_dir
@@ -207,21 +230,28 @@ def _execute_step(
         return
 
     if step.kind == FILL:
-        page.locator(step.selector).fill(step.value or "", timeout=timeout_ms)
+        locator = page.locator(step.selector)
+        _scroll_into_view(locator, timeout_ms=timeout_ms)
+        locator.fill(step.value or "", timeout=timeout_ms)
         return
 
     if step.kind == INTERACT:
         locator = page.locator(step.selector)
         if step.action == CLICK:
+            _scroll_into_view(locator, timeout_ms=timeout_ms)
             locator.click(timeout=timeout_ms)
         elif step.action == SELECT_OPTION:
+            _scroll_into_view(locator, timeout_ms=timeout_ms)
             locator.select_option(step.value, timeout=timeout_ms)
         else:
+            _scroll_into_view(locator, timeout_ms=timeout_ms)
             getattr(locator, step.action)(timeout=timeout_ms)
         return
 
     if step.kind == SUBMIT:
-        page.locator(step.selector).click(timeout=timeout_ms)
+        locator = page.locator(step.selector)
+        _scroll_into_view(locator, timeout_ms=timeout_ms)
+        locator.click(timeout=timeout_ms)
         _settle(page, timeout_ms=timeout_ms)
         return
 

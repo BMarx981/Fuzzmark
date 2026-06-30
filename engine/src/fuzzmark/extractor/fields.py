@@ -77,8 +77,24 @@ _EXTRACT_JS = r"""
     if (el.id) return '#' + cssEscape(el.id);
     const tag = el.tagName.toLowerCase();
     if (el.name) return tag + '[name="' + el.name + '"]';
-    const same = Array.from(root.querySelectorAll(tag));
-    return tag + ':nth-of-type(' + (same.indexOf(el) + 1) + ')';
+    // Build a chain of :nth-child segments up to root or the closest ancestor
+    // with an id. :nth-child is position-among-siblings so it matches
+    // unambiguously, unlike :nth-of-type used with a document-order index.
+    const parts = [];
+    let cur = el;
+    while (cur && cur !== root) {
+      const parent = cur.parentNode;
+      if (!parent || !parent.children) break;
+      const idx = Array.prototype.indexOf.call(parent.children, cur) + 1;
+      parts.unshift(cur.tagName.toLowerCase() + ':nth-child(' + idx + ')');
+      if (parent === root) break;
+      if (parent.id) {
+        parts.unshift('#' + cssEscape(parent.id));
+        break;
+      }
+      cur = parent;
+    }
+    return parts.join(' > ');
   };
 
   const emptyValidation = () => ({
