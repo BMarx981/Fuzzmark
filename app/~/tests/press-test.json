@@ -1,0 +1,18 @@
+{
+  "name": "press test",
+  "flow": [
+    {
+      "kind": "visit",
+      "url": "https://www.careermoves.org/about"
+    },
+    {
+      "kind": "interact",
+      "selector": "#block-mainnavigation-md > ul:nth-child(1) > li:nth-child(3) > a:nth-child(1)",
+      "action": "click"
+    },
+    {
+      "kind": "capture",
+      "name": "pressTest"
+    }
+  ]
+}

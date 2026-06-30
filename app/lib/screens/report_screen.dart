@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../api/client.dart';
 import '../theme/fuzzmark_tokens.dart';
 import '../theme/fuzzmark_widgets.dart';
+import 'diff_viewer.dart';
 
 const _verdictOrder = {
   'layout-break': 0,
@@ -342,6 +343,12 @@ class _EntryCard extends StatelessWidget {
                 style: FuzzText.caption.copyWith(color: c.textMuted),
               ),
               const SizedBox(width: 8),
+              TextButton.icon(
+                onPressed: () => _openViewer(context, DiffViewerMode.sideBySide),
+                icon: const Icon(Icons.open_in_full, size: 14),
+                label: const Text('Open viewer'),
+              ),
+              const SizedBox(width: 4),
               FilterChip(
                 selected: selected,
                 label: const Text('Approve'),
@@ -356,13 +363,36 @@ class _EntryCard extends StatelessWidget {
     );
   }
 
+  void _openViewer(BuildContext context, DiffViewerMode mode) {
+    showDiffViewer(
+      context,
+      title: entry.name,
+      baselinePath: entry.baselinePath,
+      capturePath: entry.capturePath,
+      diffPath: entry.diffPath,
+      initialMode: mode,
+    );
+  }
+
   Widget _diffRow(BuildContext context) {
     final panels = <Widget>[
-      _imagePanel(context, label: 'Baseline', path: entry.baselinePath),
-      _imagePanel(context, label: 'Capture', path: entry.capturePath),
+      _imagePanel(context,
+          label: 'Baseline',
+          path: entry.baselinePath,
+          onTap: () => _openViewer(context, DiffViewerMode.sideBySide)),
+      _imagePanel(context,
+          label: 'Capture',
+          path: entry.capturePath,
+          onTap: () => _openViewer(context,
+              entry.baselinePath != null
+                  ? DiffViewerMode.slider
+                  : DiffViewerMode.sideBySide)),
     ];
     if (entry.diffPath != null) {
-      panels.add(_imagePanel(context, label: 'Diff', path: entry.diffPath));
+      panels.add(_imagePanel(context,
+          label: 'Diff',
+          path: entry.diffPath,
+          onTap: () => _openViewer(context, DiffViewerMode.diffOnly)));
     }
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -376,7 +406,9 @@ class _EntryCard extends StatelessWidget {
   }
 
   Widget _imagePanel(BuildContext context,
-      {required String label, required String? path}) {
+      {required String label,
+      required String? path,
+      required VoidCallback onTap}) {
     final c = context.fuzz;
     Widget body;
     if (path == null) {
@@ -416,7 +448,14 @@ class _EntryCard extends StatelessWidget {
       children: [
         Text(label, style: FuzzText.label.copyWith(color: c.textMuted)),
         const SizedBox(height: 4),
-        body,
+        MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onTap,
+            child: body,
+          ),
+        ),
       ],
     );
   }

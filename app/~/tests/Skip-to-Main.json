@@ -1,0 +1,18 @@
+{
+  "name": "Skip to Main",
+  "flow": [
+    {
+      "kind": "visit",
+      "url": "https://www.careermoves.org/about"
+    },
+    {
+      "kind": "interact",
+      "selector": "#skip-to-main",
+      "action": "click"
+    },
+    {
+      "kind": "capture",
+      "name": "skip_to_main"
+    }
+  ]
+}

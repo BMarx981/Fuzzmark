@@ -1,0 +1,9 @@
+{
+  "name": "Stupid Project",
+  "base_url": "https://www.careermoves.org",
+  "scan": "scan.json",
+  "tests": [
+    "tests/Skip-to-Main.json",
+    "tests/press-test.json"
+  ]
+}

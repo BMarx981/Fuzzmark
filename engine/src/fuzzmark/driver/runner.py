@@ -9,10 +9,13 @@ land at `<out>/<viewport>/<step>.png` when viewports are configured, or flat
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
+from typing import Callable, Optional
 
 from ..capture import ConsoleMessage, FailedRequest
 from ..compare import MaskRegion
+from ..jobs import JobCancelled
 from .models import (
     CAPTURE,
     CLICK,
@@ -30,6 +33,21 @@ from .models import (
 
 
 _CONSOLE_LEVELS_TRACKED = {"error", "warning"}
+
+
+EventCallback = Callable[[dict], None]
+
+
+def _emit(on_event: Optional[EventCallback], event: dict) -> None:
+    """Push `event` to `on_event` if a callback was supplied."""
+    if on_event is not None:
+        on_event(event)
+
+
+def _check_cancel(cancel: Optional[threading.Event]) -> None:
+    """Raise `JobCancelled` if a cancel event was supplied and is set."""
+    if cancel is not None and cancel.is_set():
+        raise JobCancelled()
 
 
 def _scroll_into_view(locator, *, timeout_ms: int) -> None:
@@ -80,6 +98,8 @@ def run_flow(
     headless: bool = True,
     slow_mo_ms: int = 0,
     session: str | None = None,
+    on_event: Optional[EventCallback] = None,
+    cancel: Optional[threading.Event] = None,
 ) -> RunResult:
     """Drive `test` against a fresh browser and return a `RunResult`.
 
@@ -91,6 +111,11 @@ def run_flow(
     When `test.session` is set it overrides `session`; otherwise the kwarg is
     used. The resolved session path is replayed into each per-viewport context
     so authenticated flows reuse the captured cookies and origins.
+
+    `on_event` (optional) receives progress events as the flow runs — see the
+    `event=...` strings below. `cancel` (optional) is a `threading.Event`
+    polled between steps; setting it makes the next step raise `JobCancelled`,
+    which propagates out of `run_flow` after the browser is closed.
     """
     from playwright.sync_api import sync_playwright
 
@@ -107,6 +132,16 @@ def run_flow(
     page_errors: list[str] = []
     failed_requests: list[FailedRequest] = []
     captures: list[CaptureArtifact] = []
+
+    _emit(
+        on_event,
+        {
+            "event": "started",
+            "test_name": test.name,
+            "total_steps": len(viewports) * len(test.flow),
+            "viewports": [vp.name for vp in viewports] if tag_with_viewport else [],
+        },
+    )
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(
@@ -130,6 +165,8 @@ def run_flow(
                     wait_until=wait_until,
                     timeout_ms=timeout_ms,
                     session=resolved_session,
+                    on_event=on_event,
+                    cancel=cancel,
                 )
         finally:
             browser.close()
@@ -157,19 +194,36 @@ def _run_one_viewport(
     wait_until: str,
     timeout_ms: int,
     session: str | None,
+    on_event: Optional[EventCallback] = None,
+    cancel: Optional[threading.Event] = None,
 ) -> None:
     context = browser.new_context(
         viewport={"width": vp.width, "height": vp.height},
         storage_state=session,
     )
     page = context.new_page()
+    viewport_tag = vp.name if tag_with_viewport else None
 
     def _on_console(msg) -> None:
         if msg.type in _CONSOLE_LEVELS_TRACKED:
             console_errors.append(ConsoleMessage(level=msg.type, text=msg.text))
+            _emit(
+                on_event,
+                {
+                    "event": "console_error",
+                    "level": msg.type,
+                    "text": msg.text,
+                    "viewport": viewport_tag,
+                },
+            )
 
     def _on_pageerror(exc) -> None:
-        page_errors.append(str(exc))
+        message = str(exc)
+        page_errors.append(message)
+        _emit(
+            on_event,
+            {"event": "page_error", "message": message, "viewport": viewport_tag},
+        )
 
     def _on_requestfailed(request) -> None:
         failure = request.failure or ""
@@ -179,6 +233,16 @@ def _run_one_viewport(
                 method=request.method,
                 failure=failure or None,
             )
+        )
+        _emit(
+            on_event,
+            {
+                "event": "failed_request",
+                "url": request.url,
+                "method": request.method,
+                "failure": failure or None,
+                "viewport": viewport_tag,
+            },
         )
 
     def _on_response(response) -> None:
@@ -190,15 +254,34 @@ def _run_one_viewport(
                     status=response.status,
                 )
             )
+            _emit(
+                on_event,
+                {
+                    "event": "failed_request",
+                    "url": response.url,
+                    "method": response.request.method,
+                    "status": response.status,
+                    "viewport": viewport_tag,
+                },
+            )
 
     page.on("console", _on_console)
     page.on("pageerror", _on_pageerror)
     page.on("requestfailed", _on_requestfailed)
     page.on("response", _on_response)
 
-    viewport_tag = vp.name if tag_with_viewport else None
     try:
         for idx, step in enumerate(test.flow):
+            _check_cancel(cancel)
+            _emit(
+                on_event,
+                {
+                    "event": "step_started",
+                    "index": idx,
+                    "kind": step.kind,
+                    "viewport": viewport_tag,
+                },
+            )
             _execute_step(
                 page,
                 step,
@@ -208,6 +291,16 @@ def _run_one_viewport(
                 viewport_tag=viewport_tag,
                 wait_until=wait_until,
                 timeout_ms=timeout_ms,
+                on_event=on_event,
+            )
+            _emit(
+                on_event,
+                {
+                    "event": "step_finished",
+                    "index": idx,
+                    "kind": step.kind,
+                    "viewport": viewport_tag,
+                },
             )
     finally:
         context.close()
@@ -223,6 +316,7 @@ def _execute_step(
     viewport_tag: str | None,
     wait_until: str,
     timeout_ms: int,
+    on_event: Optional[EventCallback] = None,
 ) -> None:
     if step.kind == VISIT:
         page.goto(step.url, wait_until=wait_until, timeout=timeout_ms)
@@ -270,6 +364,16 @@ def _execute_step(
                 masks=masks,
                 viewport=viewport_tag,
             )
+        )
+        _emit(
+            on_event,
+            {
+                "event": "capture",
+                "name": step.name,
+                "index": idx,
+                "screenshot_path": str(path),
+                "viewport": viewport_tag,
+            },
         )
         return
 
