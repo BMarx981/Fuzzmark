@@ -99,3 +99,41 @@ def test_native_form_fixture_has_one_submit_cta(fixture_form_url: str) -> None:
     assert len(ctas) == 1
     assert ctas[0].kind == "button"
     assert ctas[0].label == "Send"
+
+
+def test_extracts_onclick_div(fixture_ctas_url: str) -> None:
+    """A styled <div class="btn" onclick> is detected as a button."""
+    ctas = extract_ctas(fixture_ctas_url)
+    onclick = _by_id(ctas, "div-onclick")
+    assert onclick is not None
+    assert onclick.kind == "button"
+    assert onclick.label == "Save changes"
+    assert onclick.href is None
+
+
+def test_extracts_cursor_pointer_with_name(fixture_ctas_url: str) -> None:
+    """A <span style="cursor:pointer"> with text is detected via the visual heuristic."""
+    ctas = extract_ctas(fixture_ctas_url)
+    span = _by_id(ctas, "span-pointer")
+    assert span is not None
+    assert span.kind == "button"
+    assert span.label == "Toggle theme"
+
+
+def test_heuristic_skips_decorative_unnamed_pointer(fixture_ctas_url: str) -> None:
+    """A cursor:pointer element with no accessible name is not emitted."""
+    ctas = extract_ctas(fixture_ctas_url)
+    assert _by_id(ctas, "decorative") is None
+
+
+def test_heuristic_suppresses_child_inside_recorded_wrapper(fixture_ctas_url: str) -> None:
+    """When a wrapper is recorded via onclick, its cursor:pointer descendants are skipped."""
+    ctas = extract_ctas(fixture_ctas_url)
+    wrapper = _by_id(ctas, "wrapper-onclick")
+    assert wrapper is not None
+    assert wrapper.kind == "button"
+    # The wrapper's accessible name is the concatenated descendant text.
+    assert wrapper.label == "Open menu"
+    # Inner span and icon must NOT be emitted as separate CTAs.
+    assert _by_id(ctas, "wrapper-onclick-icon") is None
+    assert _by_id(ctas, "wrapper-onclick-label") is None

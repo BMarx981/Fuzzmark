@@ -150,7 +150,10 @@ def _browser_fetcher(
     timeout_ms: int, headless: bool, session: str | None = None
 ) -> FetchPage:
     """Build a Chromium-backed fetcher in its own Playwright context."""
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import (
+        TimeoutError as PlaywrightTimeoutError,
+        sync_playwright,
+    )
 
     pw = sync_playwright().start()
     browser = pw.chromium.launch(headless=headless)
@@ -159,7 +162,11 @@ def _browser_fetcher(
     def fetch(url: str) -> FetchResult:
         page = context.new_page()
         try:
-            page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            try:
+                page.wait_for_load_state("load", timeout=3000)
+            except PlaywrightTimeoutError:
+                pass
             data = page.evaluate(_LINK_JS)
             raw_ctas = page.evaluate(_EXTRACT_CTAS_JS)
             return FetchResult(

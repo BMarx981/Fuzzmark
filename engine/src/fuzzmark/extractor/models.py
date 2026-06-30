@@ -49,10 +49,12 @@ class Field:
 class CTA:
     """A clickable call-to-action discovered on a page.
 
-    `kind` is `"button"` (native `<button>`, `<input type=submit|button>`, or
-    a `role="button"` element) or `"link"` (an `<a>` with an `href`).
-    `label` is the accessible name; `href` is set only for links. `disabled`
-    captures `[disabled]` or `aria-disabled="true"`.
+    `kind` is `"button"` (native `<button>`, `<input type=submit|button>`,
+    a `role="button"` element, or a non-semantic clickable matched
+    heuristically via `onclick` / `cursor: pointer`) or `"link"` (an
+    `<a>` with an `href`). `label` is the accessible name; `href` is set
+    only for links. `disabled` captures `[disabled]` or
+    `aria-disabled="true"`.
     """
 
     selector: str

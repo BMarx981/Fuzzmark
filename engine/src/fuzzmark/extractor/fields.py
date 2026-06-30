@@ -355,7 +355,10 @@ def extract_fields(
     fire at most once per iteration, so a 3-step wizard walks with
     `reveal=2`. The pass remains bounded and idempotent.
     """
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import (
+        TimeoutError as PlaywrightTimeoutError,
+        sync_playwright,
+    )
 
     if reveal < 0:
         raise ValueError("reveal must be >= 0")
@@ -366,7 +369,11 @@ def extract_fields(
             context = browser.new_context(storage_state=session) if session else browser.new_context()
             page = context.new_page()
             try:
-                page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+                page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                try:
+                    page.wait_for_load_state("load", timeout=3000)
+                except PlaywrightTimeoutError:
+                    pass
                 raw_fields = page.evaluate(_EXTRACT_JS)
                 if reveal > 0:
                     clicked: list[str] = []

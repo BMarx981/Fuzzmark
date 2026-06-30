@@ -9,11 +9,16 @@
     section { max-width: 560px; margin: 0 auto 24px; background: white;
               padding: 18px 22px; border-radius: 8px;
               box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
-    button, input[type=button], input[type=submit], .role-btn {
+    button, input[type=button], input[type=submit], .role-btn, .btn {
       padding: 6px 12px; font: inherit; border: 1px solid #d1d5db;
       border-radius: 4px; background: #f3f4f6; cursor: pointer;
-      margin-right: 6px;
+      margin-right: 6px; display: inline-block;
     }
+    .btn-icon { display: inline-block; width: 12px; height: 12px;
+                background: #6b7280; cursor: pointer; margin-right: 4px; }
+    .pointer-link { cursor: pointer; color: #2563eb; }
+    .decorative-hover { cursor: pointer; width: 40px; height: 8px;
+                        background: #e5e7eb; display: inline-block; }
     [aria-disabled="true"], [disabled] { opacity: 0.5; cursor: not-allowed; }
   </style>
 </head>
@@ -51,6 +56,17 @@
     <span id="lbl-purchase">Purchase</span>
     <button id="btn-labelledby" aria-labelledby="lbl-purchase"></button>
     <button id="btn-title" title="Settings"></button>
+  </section>
+
+  <section>
+    <h2>Non-semantic clickables (heuristic)</h2>
+    <div id="div-onclick" class="btn" onclick="void(0)">Save changes</div>
+    <span id="span-pointer" class="pointer-link">Toggle theme</span>
+    <div id="wrapper-onclick" class="btn" onclick="void(0)">
+      <span id="wrapper-onclick-icon" class="btn-icon"></span>
+      <span id="wrapper-onclick-label">Open menu</span>
+    </div>
+    <div id="decorative" class="decorative-hover"></div>
   </section>
 
 </body>

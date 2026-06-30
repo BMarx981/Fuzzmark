@@ -5,8 +5,15 @@ Sibling to `fields.py`. The walker descends through the same DOM regions
 clickable element. Selectors across boundaries are joined with ` >>> `
 matching the convention used for fields.
 
-Buttons cover native `<button>`, `<input type=submit|button>`, and
-`role="button"` elements; links cover `<a>` with a non-empty `href`.
+Detection runs in two passes per element. The semantic pass catches
+native `<button>`, `<input type=submit|button>`, `role="button"`, and
+`<a>` with a non-empty `href`. The heuristic pass catches non-semantic
+clickables that real-world apps emit as styled `<div>`/`<span>`: any
+element with an inline `onclick` handler, or a computed
+`cursor: pointer` combined with a visible accessible name. To avoid
+double-counting wrapper + child, a heuristic match is suppressed if any
+already-recorded ancestor exists within the same root.
+
 `label` is the accessible name (aria-labelledby → aria-label →
 textContent → input value → title). `disabled` is true when the element
 carries `[disabled]` or `aria-disabled="true"`.
@@ -90,12 +97,44 @@ _EXTRACT_CTAS_JS = r"""
     return null;
   };
 
+  const HEURISTIC_SKIP_TAGS = new Set([
+    'html', 'body', 'head', 'script', 'style', 'meta', 'link', 'title',
+    'input', 'select', 'textarea', 'option', 'optgroup', 'label',
+    'form', 'fieldset', 'legend',
+    'a', 'button',
+  ]);
+
+  const classifyHeuristic = (el, root) => {
+    const tag = el.tagName.toLowerCase();
+    if (HEURISTIC_SKIP_TAGS.has(tag)) return null;
+    if (el.hasAttribute('onclick')) return 'button';
+    let cursor = null;
+    try { cursor = getComputedStyle(el).cursor; } catch (_) {}
+    if (cursor === 'pointer') {
+      const name = accessibleName(el, root);
+      if (name) return 'button';
+    }
+    return null;
+  };
+
   const out = [];
 
   const walk = (root, pathPrefix) => {
     if (!root) return;
+    const recorded = new WeakSet();
+    const hasRecordedAncestor = (el) => {
+      let p = el.parentElement;
+      while (p && p !== root) {
+        if (recorded.has(p)) return true;
+        p = p.parentElement;
+      }
+      return false;
+    };
     root.querySelectorAll('*').forEach((el) => {
-      const kind = classify(el);
+      let kind = classify(el);
+      if (!kind && !hasRecordedAncestor(el)) {
+        kind = classifyHeuristic(el, root);
+      }
       if (kind) {
         const rec = {
           selector: pathPrefix + localSelectorFor(el, root),
@@ -105,6 +144,7 @@ _EXTRACT_CTAS_JS = r"""
           disabled: isDisabled(el),
         };
         out.push(rec);
+        recorded.add(el);
       }
       if (el.shadowRoot) {
         walk(el.shadowRoot, pathPrefix + localSelectorFor(el, root) + ' >>> ');
@@ -143,12 +183,20 @@ def extract_ctas(
     """Load a page and return the clickable CTAs found on it.
 
     Discovers native `<button>` and `<input type=submit|button>`,
-    `role="button"` widgets, and `<a>` with `href`. Pierces open shadow
-    roots and same-origin iframes; cross-boundary selectors are joined
-    with ` >>> `. When `session` is a path to a Playwright storage_state
-    file, its cookies and origins are restored.
+    `role="button"` widgets, and `<a>` with `href`. Also picks up
+    non-semantic clickables: any element with an inline `onclick`
+    handler, or a computed `cursor: pointer` paired with a visible
+    accessible name. Heuristic matches nested inside an already-recorded
+    clickable are suppressed so wrapper + child are not both emitted.
+
+    Pierces open shadow roots and same-origin iframes; cross-boundary
+    selectors are joined with ` >>> `. When `session` is a path to a
+    Playwright storage_state file, its cookies and origins are restored.
     """
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import (
+        TimeoutError as PlaywrightTimeoutError,
+        sync_playwright,
+    )
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=headless)
@@ -156,7 +204,11 @@ def extract_ctas(
             context = browser.new_context(storage_state=session) if session else browser.new_context()
             page = context.new_page()
             try:
-                page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+                page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                try:
+                    page.wait_for_load_state("load", timeout=3000)
+                except PlaywrightTimeoutError:
+                    pass
                 raw = page.evaluate(_EXTRACT_CTAS_JS)
             finally:
                 context.close()
