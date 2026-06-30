@@ -32,12 +32,31 @@ from .models import (
 _CONSOLE_LEVELS_TRACKED = {"error", "warning"}
 
 
+def _settle(page, *, timeout_ms: int) -> None:
+    """Best-effort wait for the page to finish loading subresources.
+
+    Used after navigation and before a screenshot so images/fonts/late
+    content have a chance to render without ever hanging on the kind of
+    always-pinging network traffic that breaks `networkidle`.
+    """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    try:
+        page.wait_for_load_state("load", timeout=min(3000, timeout_ms))
+    except PlaywrightTimeoutError:
+        pass
+    try:
+        page.wait_for_load_state("networkidle", timeout=min(2000, timeout_ms))
+    except PlaywrightTimeoutError:
+        pass
+
+
 def run_flow(
     test: Test,
     output_dir: str | Path,
     *,
     viewport: tuple[int, int] = (1280, 800),
-    wait_until: str = "networkidle",
+    wait_until: str = "domcontentloaded",
     timeout_ms: int = 15000,
     headless: bool = True,
     session: str | None = None,
@@ -184,6 +203,7 @@ def _execute_step(
 ) -> None:
     if step.kind == VISIT:
         page.goto(step.url, wait_until=wait_until, timeout=timeout_ms)
+        _settle(page, timeout_ms=timeout_ms)
         return
 
     if step.kind == FILL:
@@ -202,13 +222,11 @@ def _execute_step(
 
     if step.kind == SUBMIT:
         page.locator(step.selector).click(timeout=timeout_ms)
-        try:
-            page.wait_for_load_state(wait_until, timeout=timeout_ms)
-        except Exception:
-            pass
+        _settle(page, timeout_ms=timeout_ms)
         return
 
     if step.kind == CAPTURE:
+        _settle(page, timeout_ms=timeout_ms)
         path = out_dir / f"{step.name}.png"
         page.screenshot(path=str(path), full_page=step.full_page)
         masks = tuple(step.mask_regions) + tuple(

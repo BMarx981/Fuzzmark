@@ -16,7 +16,7 @@ def capture_page(
     *,
     viewport: tuple[int, int] = (1280, 800),
     full_page: bool = True,
-    wait_until: str = "networkidle",
+    wait_until: str = "domcontentloaded",
     timeout_ms: int = 15000,
     headless: bool = True,
     session: str | None = None,
@@ -87,7 +87,21 @@ def capture_page(
         page.on("response", _on_response)
 
         try:
+            from playwright.sync_api import (
+                TimeoutError as PlaywrightTimeoutError,
+            )
+
             page.goto(url, wait_until=wait_until, timeout=timeout_ms)
+            try:
+                page.wait_for_load_state("load", timeout=min(3000, timeout_ms))
+            except PlaywrightTimeoutError:
+                pass
+            try:
+                page.wait_for_load_state(
+                    "networkidle", timeout=min(2000, timeout_ms)
+                )
+            except PlaywrightTimeoutError:
+                pass
             page.screenshot(path=str(path), full_page=full_page)
         finally:
             context.close()
