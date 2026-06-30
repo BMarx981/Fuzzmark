@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../theme/fuzzmark_tokens.dart';
+import '../theme/fuzzmark_widgets.dart';
 import 'report_screen.dart';
 
 class RunScreen extends StatefulWidget {
@@ -74,22 +76,29 @@ class _RunScreenState extends State<RunScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final mono = const TextStyle(fontFamily: 'monospace', fontSize: 13);
+    final c = context.fuzz;
     return Scaffold(
+      backgroundColor: c.surface0,
       appBar: AppBar(
+        backgroundColor: c.surface2,
+        foregroundColor: c.textPrimary,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        shape: Border(bottom: BorderSide(color: c.border, width: 0.5)),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: _running ? null : widget.onClose,
         ),
-        title: Text('Run — ${widget.testPath}'),
+        title: Text('Run — ${widget.testPath}',
+            style: FuzzText.title.copyWith(color: c.textPrimary)),
         actions: [
           if (_running)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               child: SizedBox(
                 width: 18,
                 height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
+                child: CircularProgressIndicator(strokeWidth: 2, color: c.accentFill),
               ),
             ),
         ],
@@ -109,15 +118,20 @@ class _RunScreenState extends State<RunScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(widget.project.name,
-                              style: Theme.of(context).textTheme.titleMedium),
+                              style: FuzzText.title
+                                  .copyWith(color: c.textPrimary)),
                           const SizedBox(height: 2),
-                          Text(widget.testPath, style: mono),
+                          Text(widget.testPath,
+                              style: FuzzText.mono
+                                  .copyWith(color: c.textSecondary)),
                         ],
                       ),
                     ),
                     Row(
                       children: [
-                        const Text('Headed'),
+                        Text('Headed',
+                            style:
+                                FuzzText.label.copyWith(color: c.textSecondary)),
                         Switch(
                           value: _headed,
                           onChanged: _running
@@ -142,21 +156,15 @@ class _RunScreenState extends State<RunScreen> {
                   ],
                 ),
                 const SizedBox(height: 12),
-                if (_running) const LinearProgressIndicator(),
-                if (_error != null) ...[
-                  const SizedBox(height: 8),
-                  Card(
-                    color: Theme.of(context).colorScheme.errorContainer,
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Text(
-                        _error!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onErrorContainer,
-                        ),
-                      ),
-                    ),
+                if (_running)
+                  LinearProgressIndicator(
+                    minHeight: 4,
+                    backgroundColor: c.surface1,
+                    valueColor: AlwaysStoppedAnimation(c.accentFill),
                   ),
+                if (_error != null) ...[
+                  const SizedBox(height: FuzzSpace.sm),
+                  _errorBanner(context, _error!),
                 ],
                 const SizedBox(height: 12),
                 Expanded(child: _resultBody(context)),
@@ -170,28 +178,48 @@ class _RunScreenState extends State<RunScreen> {
 
   Widget _resultBody(BuildContext context) {
     if (_running && _result == null) {
-      return Center(
-        child: Text(
-          'Driving the browser…',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-        ),
+      return const FuzzStateCard(
+        kind: FuzzStateKind.loading,
+        title: 'Driving the browser…',
+        message: 'Running the test flow against the page.',
       );
     }
     final result = _result;
     if (result == null) {
-      return Center(
-        child: Text(
-          'Press “Run test” to execute the flow and capture screenshots.',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-        ),
+      return FuzzStateCard(
+        kind: FuzzStateKind.empty,
+        title: 'No run yet',
+        message: 'Press “Run test” to execute the flow and capture screenshots.',
+        actionLabel: 'Run test',
+        actionIcon: Icons.play_arrow,
+        onAction: _run,
       );
     }
     return _ResultView(result: result);
   }
+}
+
+Widget _errorBanner(BuildContext context, String message) {
+  final c = context.fuzz;
+  return Container(
+    padding: const EdgeInsets.all(FuzzSpace.md),
+    decoration: BoxDecoration(
+      color: c.dangerBg,
+      borderRadius: const BorderRadius.all(FuzzSpace.controlRadius),
+      border: Border.all(color: c.border, width: 0.5),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(Icons.error_outline, size: 16, color: c.dangerText),
+        const SizedBox(width: FuzzSpace.sm),
+        Expanded(
+          child: Text(message,
+              style: FuzzText.body.copyWith(color: c.dangerText)),
+        ),
+      ],
+    ),
+  );
 }
 
 class _ResultView extends StatelessWidget {
@@ -201,8 +229,7 @@ class _ResultView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final mono = const TextStyle(fontFamily: 'monospace', fontSize: 12);
-    final scheme = Theme.of(context).colorScheme;
+    final c = context.fuzz;
     final captures = result.captures;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -210,36 +237,30 @@ class _ResultView extends StatelessWidget {
         Row(
           children: [
             Text('${captures.length} captures',
-                style: Theme.of(context).textTheme.bodyMedium),
+                style: FuzzText.body.copyWith(color: c.textPrimary)),
             const SizedBox(width: 16),
             if (result.hasErrors)
-              Chip(
-                label: Text(
-                  _errorSummary(result),
-                  style: TextStyle(color: scheme.onErrorContainer),
-                ),
-                backgroundColor: scheme.errorContainer,
-                side: BorderSide.none,
-              )
+              _pill(context, _errorSummary(result),
+                  bg: c.dangerBg, fg: c.dangerText)
             else
-              Chip(
-                label: const Text('no errors collected'),
-                backgroundColor: scheme.surfaceContainerHighest,
-                side: BorderSide.none,
-              ),
+              _pill(context, 'no errors collected',
+                  bg: c.surface1, fg: c.textMuted),
             const Spacer(),
-            Text(
-              result.runDir,
-              style: mono,
-              overflow: TextOverflow.ellipsis,
+            Flexible(
+              child: Text(
+                result.runDir,
+                style: FuzzText.mono.copyWith(color: c.textMuted),
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.right,
+              ),
             ),
           ],
         ),
-        const Divider(height: 16),
+        const SizedBox(height: FuzzSpace.md),
         Expanded(
           child: ListView(
             children: [
-              for (final c in captures) _CaptureTile(capture: c),
+              for (final cap in captures) _CaptureTile(capture: cap),
               if (result.hasErrors) ...[
                 const SizedBox(height: 8),
                 _ErrorsPanel(result: result),
@@ -264,6 +285,20 @@ class _ResultView extends StatelessWidget {
   }
 }
 
+Widget _pill(BuildContext context, String text,
+    {required Color bg, required Color fg}) {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    decoration: BoxDecoration(
+      color: bg,
+      borderRadius: const BorderRadius.all(FuzzSpace.controlRadius),
+    ),
+    child: Text(text,
+        style: FuzzText.caption
+            .copyWith(color: fg, fontWeight: FontWeight.w500)),
+  );
+}
+
 class _CaptureTile extends StatelessWidget {
   const _CaptureTile({required this.capture});
 
@@ -271,53 +306,57 @@ class _CaptureTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.fuzz;
     final file = File(capture.screenshotPath);
-    return Card(
+    return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text(
-                  capture.name,
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'step ${capture.stepIndex}'
-                  '${capture.viewport != null ? " · ${capture.viewport}" : ""}',
-                  style: Theme.of(context).textTheme.labelSmall,
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              capture.screenshotPath,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 8),
-            if (file.existsSync())
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: Image.file(
-                  file,
-                  fit: BoxFit.fitWidth,
-                  errorBuilder: (_, _, _) =>
-                      const Text('Failed to render screenshot'),
-                ),
-              )
-            else
+      padding: const EdgeInsets.all(FuzzSpace.md),
+      decoration: BoxDecoration(
+        color: c.surface2,
+        borderRadius: const BorderRadius.all(FuzzSpace.cardRadius),
+        border: Border.all(color: c.border, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(capture.name,
+                  style: FuzzText.heading.copyWith(color: c.textPrimary)),
+              const SizedBox(width: 8),
               Text(
-                'screenshot not found on disk',
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+                'step ${capture.stepIndex}'
+                '${capture.viewport != null ? " · ${capture.viewport}" : ""}',
+                style: FuzzText.caption.copyWith(color: c.textMuted),
               ),
-          ],
-        ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            capture.screenshotPath,
+            style: FuzzText.mono.copyWith(color: c.textMuted, fontSize: 11),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 8),
+          if (file.existsSync())
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: Image.file(
+                file,
+                fit: BoxFit.fitWidth,
+                errorBuilder: (_, _, _) => Text(
+                  'Failed to render screenshot',
+                  style: FuzzText.body.copyWith(color: c.dangerText),
+                ),
+              ),
+            )
+          else
+            Text(
+              'screenshot not found on disk',
+              style: FuzzText.body.copyWith(color: c.dangerText),
+            ),
+        ],
       ),
     );
   }
@@ -330,53 +369,57 @@ class _ErrorsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final mono = const TextStyle(fontFamily: 'monospace', fontSize: 12);
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Collected errors',
-                style: Theme.of(context).textTheme.titleSmall),
+    final c = context.fuzz;
+    return Container(
+      padding: const EdgeInsets.all(FuzzSpace.md),
+      decoration: BoxDecoration(
+        color: c.surface2,
+        borderRadius: const BorderRadius.all(FuzzSpace.cardRadius),
+        border: Border.all(color: c.border, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Collected errors',
+              style: FuzzText.heading.copyWith(color: c.textPrimary)),
+          const SizedBox(height: FuzzSpace.sm),
+          if (result.consoleErrors.isNotEmpty) ...[
+            Text('Console',
+                style: FuzzText.label.copyWith(color: c.textMuted)),
+            for (final m in result.consoleErrors)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text('[${m.level}] ${m.text}',
+                    style: FuzzText.mono.copyWith(color: c.textPrimary)),
+              ),
             const SizedBox(height: 8),
-            if (result.consoleErrors.isNotEmpty) ...[
-              Text('Console',
-                  style: Theme.of(context).textTheme.labelMedium),
-              for (final m in result.consoleErrors)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Text('[${m.level}] ${m.text}', style: mono),
-                ),
-              const SizedBox(height: 8),
-            ],
-            if (result.pageErrors.isNotEmpty) ...[
-              Text('Page errors',
-                  style: Theme.of(context).textTheme.labelMedium),
-              for (final e in result.pageErrors)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Text(e, style: mono),
-                ),
-              const SizedBox(height: 8),
-            ],
-            if (result.failedRequests.isNotEmpty) ...[
-              Text('Failed requests',
-                  style: Theme.of(context).textTheme.labelMedium),
-              for (final r in result.failedRequests)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Text(
-                    '${r.method} ${r.url}'
-                    '${r.status != null ? " → ${r.status}" : ""}'
-                    '${r.failure != null ? " (${r.failure})" : ""}',
-                    style: mono,
-                  ),
-                ),
-            ],
           ],
-        ),
+          if (result.pageErrors.isNotEmpty) ...[
+            Text('Page errors',
+                style: FuzzText.label.copyWith(color: c.textMuted)),
+            for (final e in result.pageErrors)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(e,
+                    style: FuzzText.mono.copyWith(color: c.textPrimary)),
+              ),
+            const SizedBox(height: 8),
+          ],
+          if (result.failedRequests.isNotEmpty) ...[
+            Text('Failed requests',
+                style: FuzzText.label.copyWith(color: c.textMuted)),
+            for (final r in result.failedRequests)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(
+                  '${r.method} ${r.url}'
+                  '${r.status != null ? " → ${r.status}" : ""}'
+                  '${r.failure != null ? " (${r.failure})" : ""}',
+                  style: FuzzText.mono.copyWith(color: c.textPrimary),
+                ),
+              ),
+          ],
+        ],
       ),
     );
   }

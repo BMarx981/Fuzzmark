@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../theme/fuzzmark_tokens.dart';
+import '../theme/fuzzmark_widgets.dart';
 
 class TestBuilderScreen extends StatefulWidget {
   const TestBuilderScreen({
@@ -191,22 +193,30 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.fuzz;
     final busy = _loadingPages || _extracting || _saving;
     return Scaffold(
+      backgroundColor: c.surface0,
       appBar: AppBar(
+        backgroundColor: c.surface2,
+        foregroundColor: c.textPrimary,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        shape: Border(bottom: BorderSide(color: c.border, width: 0.5)),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: busy ? null : widget.onClose,
         ),
-        title: Text('New test — ${widget.project.name}'),
+        title: Text('New test — ${widget.project.name}',
+            style: FuzzText.title.copyWith(color: c.textPrimary)),
         actions: [
           if (busy)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               child: SizedBox(
                 width: 18,
                 height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
+                child: CircularProgressIndicator(strokeWidth: 2, color: c.accentFill),
               ),
             ),
         ],
@@ -216,21 +226,36 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
           if (_error != null)
             Container(
               width: double.infinity,
-              color: Theme.of(context).colorScheme.errorContainer,
+              color: c.dangerBg,
               padding: const EdgeInsets.all(12),
-              child: Text(
-                _error!,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onErrorContainer,
-                ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.error_outline, size: 16, color: c.dangerText),
+                  const SizedBox(width: FuzzSpace.sm),
+                  Expanded(
+                    child: Text(_error!,
+                        style: FuzzText.body.copyWith(color: c.dangerText)),
+                  ),
+                ],
               ),
             ),
           Expanded(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                SizedBox(width: 320, child: _pagesPane(context)),
-                const VerticalDivider(width: 1),
+                SizedBox(
+                  width: 320,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: c.surface2,
+                      border: Border(
+                        right: BorderSide(color: c.border, width: 0.5),
+                      ),
+                    ),
+                    child: _pagesPane(context),
+                  ),
+                ),
                 Expanded(child: _fieldsPane(context)),
               ],
             ),
@@ -242,79 +267,93 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
   }
 
   Widget _pagesPane(BuildContext context) {
+    final c = context.fuzz;
     if (_loadingPages) {
-      return const Center(child: CircularProgressIndicator());
+      return Center(
+        child: CircularProgressIndicator(color: c.accentFill),
+      );
     }
     final pages = _pages;
     if (pages == null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Center(
           child: Text(
             'Failed to load pages.',
-            style: Theme.of(context).textTheme.bodyMedium,
+            style: FuzzText.body.copyWith(color: c.textSecondary),
           ),
         ),
       );
     }
     if (pages.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Center(
           child: Text(
             'No pages in the saved scan. Run a scan first.',
-            style: Theme.of(context).textTheme.bodyMedium,
+            style: FuzzText.body.copyWith(color: c.textSecondary),
+            textAlign: TextAlign.center,
           ),
         ),
       );
     }
     return ListView.separated(
       itemCount: pages.length,
-      separatorBuilder: (_, _) => const Divider(height: 1),
+      separatorBuilder: (_, _) => Divider(height: 1, color: c.border),
       itemBuilder: (_, i) {
         final p = pages[i];
         final selected = identical(_selectedPage, p) ||
             (_selectedPage != null && _selectedPage!.url == p.url);
-        return ListTile(
-          dense: true,
-          selected: selected,
-          leading: Text(
-            'd${p.depth}',
-            style: Theme.of(context).textTheme.labelSmall,
+        return Container(
+          color: selected ? c.accentBg : Colors.transparent,
+          child: ListTile(
+            dense: true,
+            selected: selected,
+            leading: Text(
+              'd${p.depth}',
+              style: FuzzText.caption.copyWith(color: c.textMuted),
+            ),
+            title: Text(
+              p.title?.isNotEmpty == true ? p.title! : p.url,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: FuzzText.body.copyWith(
+                color: selected ? c.accentText : c.textPrimary,
+                fontWeight: selected ? FontWeight.w500 : FontWeight.w400,
+              ),
+            ),
+            subtitle: Text(
+              p.url,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style:
+                  FuzzText.mono.copyWith(color: c.textMuted, fontSize: 11),
+            ),
+            trailing: p.ctas.isEmpty ? null : _ctaBadge(context, p.ctas.length),
+            enabled: !_extracting && !_saving,
+            onTap: () => _pickPage(p),
           ),
-          title: Text(
-            p.title?.isNotEmpty == true ? p.title! : p.url,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          subtitle: Text(
-            p.url,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
-          ),
-          trailing: p.ctas.isEmpty ? null : _ctaBadge(context, p.ctas.length),
-          enabled: !_extracting && !_saving,
-          onTap: () => _pickPage(p),
         );
       },
     );
   }
 
   Widget _fieldsPane(BuildContext context) {
+    final c = context.fuzz;
     if (_extracting) {
-      return const Center(child: CircularProgressIndicator());
+      return Center(child: CircularProgressIndicator(color: c.accentFill));
     }
     if (_selectedPage == null) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text(
-            'Pick a page on the left to extract its form fields.',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+          child: SizedBox(
+            width: 360,
+            child: FuzzStateCard(
+              kind: FuzzStateKind.empty,
+              title: 'Pick a page',
+              message: 'Choose a page on the left to extract its form fields.',
+            ),
           ),
         ),
       );
@@ -323,10 +362,14 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text(
-            'No interactive form fields or CTAs found on this page.',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium,
+          child: SizedBox(
+            width: 360,
+            child: FuzzStateCard(
+              kind: FuzzStateKind.empty,
+              title: 'Nothing actionable',
+              message:
+                  'No interactive form fields or CTAs found on this page.',
+            ),
           ),
         ),
       );
@@ -354,40 +397,49 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
   }
 
   Widget _ctaBadge(BuildContext context, int count) {
-    final scheme = Theme.of(context).colorScheme;
+    final c = context.fuzz;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
-        color: scheme.secondaryContainer,
+        color: c.accentBg,
         borderRadius: BorderRadius.circular(10),
       ),
       child: Text(
         count == 1 ? '1 CTA' : '$count CTAs',
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: scheme.onSecondaryContainer,
-            ),
+        style: FuzzText.caption
+            .copyWith(color: c.accentText, fontWeight: FontWeight.w500),
       ),
     );
   }
 
   Widget _sectionHeader(BuildContext context, String title) {
+    final c = context.fuzz;
     return Text(
-      title,
-      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-            letterSpacing: 0.5,
-          ),
+      title.toUpperCase(),
+      style: FuzzText.label.copyWith(
+        color: c.textMuted,
+        letterSpacing: 0.8,
+        fontWeight: FontWeight.w500,
+      ),
     );
   }
 
   Widget _ctaCard(ExtractedCta cta) {
-    final scheme = Theme.of(context).colorScheme;
+    final c = context.fuzz;
     final selected = _selectedCtas.contains(cta.selector);
     final label = cta.label?.isNotEmpty == true ? cta.label! : cta.selector;
     final kindChip = cta.kind == 'link' ? 'link' : 'button';
-    return Card(
-      margin: EdgeInsets.zero,
+    return Container(
+      decoration: BoxDecoration(
+        color: c.surface2,
+        borderRadius: const BorderRadius.all(FuzzSpace.cardRadius),
+        border: Border.all(
+          color: selected ? c.accentFill : c.border,
+          width: selected ? 1 : 0.5,
+        ),
+      ),
       child: InkWell(
+        borderRadius: const BorderRadius.all(FuzzSpace.cardRadius),
         onTap: cta.disabled || _saving
             ? null
             : () => setState(() {
@@ -424,31 +476,29 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
                         Expanded(
                           child: Text(
                             label,
-                            style: Theme.of(context).textTheme.titleSmall,
+                            style: FuzzText.heading
+                                .copyWith(color: c.textPrimary),
                           ),
                         ),
                         Text(
                           cta.disabled ? '$kindChip · disabled' : kindChip,
-                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                color: scheme.onSurfaceVariant,
-                              ),
+                          style:
+                              FuzzText.caption.copyWith(color: c.textMuted),
                         ),
                       ],
                     ),
                     const SizedBox(height: 2),
                     Text(
                       cta.selector,
-                      style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                      style:
+                          FuzzText.mono.copyWith(color: c.textSecondary, fontSize: 11),
                     ),
                     if (cta.href != null && cta.href!.isNotEmpty) ...[
                       const SizedBox(height: 2),
                       Text(
                         cta.href!,
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 11,
-                          color: scheme.onSurfaceVariant,
-                        ),
+                        style:
+                            FuzzText.mono.copyWith(color: c.textMuted, fontSize: 11),
                       ),
                     ],
                   ],
@@ -462,6 +512,7 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
   }
 
   Widget _fieldCard(ExtractedField field) {
+    final c = context.fuzz;
     final controller = _values[field.selector]!;
     final suggestions = _suggestions[field.selector] ?? const <FieldSuggestion>[];
     final label = field.label?.isNotEmpty == true
@@ -469,63 +520,63 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
         : field.name?.isNotEmpty == true
             ? field.name!
             : field.selector;
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    label,
-                    style: Theme.of(context).textTheme.titleSmall,
-                  ),
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: c.surface2,
+        borderRadius: const BorderRadius.all(FuzzSpace.cardRadius),
+        border: Border.all(color: c.border, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  style: FuzzText.heading.copyWith(color: c.textPrimary),
                 ),
-                Text(
-                  '${field.kind}${field.type != null ? "/${field.type}" : ""}',
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 2),
-            Text(
-              field.selector,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: controller,
-              enabled: !_saving,
-              decoration: InputDecoration(
-                isDense: true,
-                border: const OutlineInputBorder(),
-                hintText: field.validation.required ? 'required' : 'value',
-                suffixIcon: controller.text.isEmpty
-                    ? null
-                    : IconButton(
-                        icon: const Icon(Icons.clear, size: 18),
-                        onPressed: () => setState(() => controller.clear()),
-                      ),
               ),
-              onChanged: (_) => setState(() {}),
-            ),
-            if (suggestions.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: suggestions
-                    .map((s) => _chip(s, controller))
-                    .toList(growable: false),
+              Text(
+                '${field.kind}${field.type != null ? "/${field.type}" : ""}',
+                style: FuzzText.caption.copyWith(color: c.textMuted),
               ),
             ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            field.selector,
+            style: FuzzText.mono.copyWith(color: c.textSecondary, fontSize: 11),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: controller,
+            enabled: !_saving,
+            decoration: InputDecoration(
+              isDense: true,
+              border: const OutlineInputBorder(),
+              hintText: field.validation.required ? 'required' : 'value',
+              suffixIcon: controller.text.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.clear, size: 18),
+                      onPressed: () => setState(() => controller.clear()),
+                    ),
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+          if (suggestions.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: suggestions
+                  .map((s) => _chip(s, controller))
+                  .toList(growable: false),
+            ),
           ],
-        ),
+        ],
       ),
     );
   }
@@ -539,7 +590,7 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
       side: BorderSide(color: color.border),
       label: Text(
         s.label,
-        style: TextStyle(color: color.foreground, fontSize: 12),
+        style: FuzzText.caption.copyWith(color: color.foreground),
       ),
       onPressed: _saving
           ? null
@@ -553,6 +604,7 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
   }
 
   Widget _footer(BuildContext context) {
+    final c = context.fuzz;
     final filledCount = _filledFields().length;
     final ctaCount = _selectedCtas.length;
     final canSave = filledCount > 0 || ctaCount > 0;
@@ -564,16 +616,15 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
                 '$ctaCount of ${_ctas.length} CTAs';
     return Container(
       decoration: BoxDecoration(
-        border: Border(
-          top: BorderSide(color: Theme.of(context).dividerColor),
-        ),
+        color: c.surface2,
+        border: Border(top: BorderSide(color: c.border, width: 0.5)),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
         children: [
           Text(
             summary,
-            style: Theme.of(context).textTheme.bodyMedium,
+            style: FuzzText.body.copyWith(color: c.textSecondary),
           ),
           const Spacer(),
           FilledButton.icon(
@@ -587,49 +638,49 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
   }
 
   _ChipColors _categoryColor(String category) {
-    final scheme = Theme.of(context).colorScheme;
+    final c = context.fuzz;
     switch (category) {
       case 'security':
         return _ChipColors(
-          background: scheme.errorContainer,
-          foreground: scheme.onErrorContainer,
-          border: scheme.error,
+          background: c.dangerBg,
+          foreground: c.dangerText,
+          border: c.dangerFill,
         );
       case 'boundary':
         return _ChipColors(
-          background: scheme.tertiaryContainer,
-          foreground: scheme.onTertiaryContainer,
-          border: scheme.tertiary,
+          background: c.warningBg,
+          foreground: c.warningText,
+          border: c.warningText,
         );
       case 'empty':
         return _ChipColors(
-          background: scheme.surfaceContainerHighest,
-          foreground: scheme.onSurface,
-          border: scheme.outlineVariant,
+          background: c.surface1,
+          foreground: c.textSecondary,
+          border: c.border,
         );
       case 'format-invalid':
         return _ChipColors(
-          background: scheme.errorContainer.withValues(alpha: 0.5),
-          foreground: scheme.onErrorContainer,
-          border: scheme.error.withValues(alpha: 0.5),
+          background: c.dangerBg,
+          foreground: c.dangerText,
+          border: c.border,
         );
       case 'format-valid':
         return _ChipColors(
-          background: scheme.primaryContainer,
-          foreground: scheme.onPrimaryContainer,
-          border: scheme.primary,
+          background: c.accentBg,
+          foreground: c.accentText,
+          border: c.accentFill,
         );
       case 'i18n':
         return _ChipColors(
-          background: scheme.secondaryContainer,
-          foreground: scheme.onSecondaryContainer,
-          border: scheme.secondary,
+          background: c.warningBg,
+          foreground: c.warningText,
+          border: c.border,
         );
       default:
         return _ChipColors(
-          background: scheme.surfaceContainerHighest,
-          foreground: scheme.onSurface,
-          border: scheme.outlineVariant,
+          background: c.surface1,
+          foreground: c.textSecondary,
+          border: c.border,
         );
     }
   }

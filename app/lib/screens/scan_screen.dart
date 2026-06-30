@@ -2,6 +2,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../theme/fuzzmark_tokens.dart';
+import '../theme/fuzzmark_widgets.dart';
 
 class ScanScreen extends StatefulWidget {
   const ScanScreen({
@@ -203,22 +205,30 @@ class _ScanScreenState extends State<ScanScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.fuzz;
     final busy = _scanning || _saving;
     return Scaffold(
+      backgroundColor: c.surface0,
       appBar: AppBar(
+        backgroundColor: c.surface2,
+        foregroundColor: c.textPrimary,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        shape: Border(bottom: BorderSide(color: c.border, width: 0.5)),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: busy ? null : widget.onClose,
         ),
-        title: Text('Scan — ${widget.project.name}'),
+        title: Text('Scan — ${widget.project.name}',
+            style: FuzzText.title.copyWith(color: c.textPrimary)),
         actions: [
           if (busy)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               child: SizedBox(
                 width: 18,
                 height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
+                child: CircularProgressIndicator(strokeWidth: 2, color: c.accentFill),
               ),
             ),
         ],
@@ -235,20 +245,16 @@ class _ScanScreenState extends State<ScanScreen> {
                 const SizedBox(height: 12),
                 _boundsPanel(context),
                 const SizedBox(height: 12),
-                if (_error != null)
-                  Card(
-                    color: Theme.of(context).colorScheme.errorContainer,
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Text(
-                        _error!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onErrorContainer,
-                        ),
-                      ),
-                    ),
+                if (_error != null) ...[
+                  _errorBanner(context, _error!),
+                  const SizedBox(height: FuzzSpace.sm),
+                ],
+                if (_scanning)
+                  LinearProgressIndicator(
+                    minHeight: 4,
+                    backgroundColor: c.surface1,
+                    valueColor: AlwaysStoppedAnimation(c.accentFill),
                   ),
-                if (_scanning) const LinearProgressIndicator(),
                 Expanded(child: _results(context)),
               ],
             ),
@@ -259,6 +265,7 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Widget _header(BuildContext context) {
+    final c = context.fuzz;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -273,10 +280,7 @@ class _ScanScreenState extends State<ScanScreen> {
                   labelText: 'Base URL',
                   isDense: true,
                 ),
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 13,
-                ),
+                style: FuzzText.mono.copyWith(color: c.textPrimary),
                 keyboardType: TextInputType.url,
                 autocorrect: false,
                 onChanged: (_) => setState(() {}),
@@ -286,9 +290,7 @@ class _ScanScreenState extends State<ScanScreen> {
                 _baseUrl.text.trim() == _persistedBaseUrl
                     ? 'Crawl the project base URL to discover pages.'
                     : 'URL will be saved to the project when you start the scan.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+                style: FuzzText.caption.copyWith(color: c.textMuted),
               ),
             ],
           ),
@@ -320,92 +322,117 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Widget _boundsPanel(BuildContext context) {
-    return Card(
-      margin: EdgeInsets.zero,
-      child: ExpansionTile(
-        initiallyExpanded: _showBounds,
-        onExpansionChanged: (v) => setState(() => _showBounds = v),
-        title: const Text('Crawl bounds'),
-        subtitle: Text(
-          'depth ${_maxDepth.text} · pages ${_maxPages.text}'
-          '${_ignoreRobots ? " · ignore robots" : ""}'
-          '${_allowCrossOrigin ? " · cross-origin" : ""}',
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _maxDepth,
-                        decoration: const InputDecoration(labelText: 'Max depth'),
-                        keyboardType: TextInputType.number,
-                        onChanged: (_) => setState(() {}),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: _maxPages,
-                        decoration: const InputDecoration(labelText: 'Max pages'),
-                        keyboardType: TextInputType.number,
-                        onChanged: (_) => setState(() {}),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: _rateLimit,
-                        decoration:
-                            const InputDecoration(labelText: 'Rate limit (s)'),
-                        keyboardType: TextInputType.number,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  dense: true,
-                  value: _ignoreRobots,
-                  title: const Text('Ignore robots.txt'),
-                  onChanged: (v) => setState(() => _ignoreRobots = v ?? false),
-                ),
-                CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  dense: true,
-                  value: _allowCrossOrigin,
-                  title: const Text('Allow cross-origin links'),
-                  onChanged: (v) =>
-                      setState(() => _allowCrossOrigin = v ?? false),
-                ),
-              ],
+    final c = context.fuzz;
+    return Container(
+      decoration: BoxDecoration(
+        color: c.surface2,
+        borderRadius: const BorderRadius.all(FuzzSpace.cardRadius),
+        border: Border.all(color: c.border, width: 0.5),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: _showBounds,
+          onExpansionChanged: (v) => setState(() => _showBounds = v),
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+          collapsedIconColor: c.textSecondary,
+          iconColor: c.textSecondary,
+          title: Text('Crawl bounds',
+              style: FuzzText.heading.copyWith(color: c.textPrimary)),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              'depth ${_maxDepth.text} · pages ${_maxPages.text}'
+              '${_ignoreRobots ? " · ignore robots" : ""}'
+              '${_allowCrossOrigin ? " · cross-origin" : ""}',
+              style: FuzzText.caption.copyWith(color: c.textMuted),
             ),
           ),
-        ],
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _maxDepth,
+                          decoration: const InputDecoration(labelText: 'Max depth'),
+                          keyboardType: TextInputType.number,
+                          onChanged: (_) => setState(() {}),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: _maxPages,
+                          decoration: const InputDecoration(labelText: 'Max pages'),
+                          keyboardType: TextInputType.number,
+                          onChanged: (_) => setState(() {}),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: _rateLimit,
+                          decoration:
+                              const InputDecoration(labelText: 'Rate limit (s)'),
+                          keyboardType: TextInputType.number,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    dense: true,
+                    value: _ignoreRobots,
+                    title: Text('Ignore robots.txt',
+                        style:
+                            FuzzText.body.copyWith(color: c.textPrimary)),
+                    onChanged: (v) => setState(() => _ignoreRobots = v ?? false),
+                  ),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    dense: true,
+                    value: _allowCrossOrigin,
+                    title: Text('Allow cross-origin links',
+                        style:
+                            FuzzText.body.copyWith(color: c.textPrimary)),
+                    onChanged: (v) =>
+                        setState(() => _allowCrossOrigin = v ?? false),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _results(BuildContext context) {
+    final c = context.fuzz;
     final result = _result;
     if (result == null) {
-      return Center(
-        child: Text(
-          _scanning
-              ? 'Crawling…'
-              : 'No scan yet. Adjust crawl bounds and start a scan.',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-        ),
+      if (_scanning) {
+        return const FuzzStateCard(
+          kind: FuzzStateKind.loading,
+          title: 'Crawling…',
+          message: 'Discovering pages from the base URL.',
+        );
+      }
+      return FuzzStateCard(
+        kind: FuzzStateKind.empty,
+        title: 'No scan yet',
+        message: 'Adjust crawl bounds and start a scan.',
+        actionLabel: 'Start scan',
+        actionIcon: Icons.travel_explore,
+        onAction: _runScan,
       );
     }
     final allSelected = result.pages
@@ -430,7 +457,7 @@ class _ScanScreenState extends State<ScanScreen> {
             Text(
               '${_selected.length} of ${result.pages.length} pages selected'
               '${result.skipped.isNotEmpty ? " · ${result.skipped.length} skipped" : ""}',
-              style: Theme.of(context).textTheme.bodyMedium,
+              style: FuzzText.body.copyWith(color: c.textPrimary),
             ),
             const Spacer(),
             FilledButton.icon(
@@ -440,17 +467,27 @@ class _ScanScreenState extends State<ScanScreen> {
             ),
           ],
         ),
-        const Divider(height: 16),
+        const SizedBox(height: FuzzSpace.md),
         Expanded(
-          child: ListView.separated(
-            itemCount: result.pages.length + result.skipped.length,
-            separatorBuilder: (_, _) => const Divider(height: 1),
-            itemBuilder: (_, i) {
-              if (i < result.pages.length) {
-                return _pageTile(result.pages[i]);
-              }
-              return _skipTile(result.skipped[i - result.pages.length]);
-            },
+          child: Container(
+            decoration: BoxDecoration(
+              color: c.surface2,
+              borderRadius: const BorderRadius.all(FuzzSpace.cardRadius),
+              border: Border.all(color: c.border, width: 0.5),
+            ),
+            child: ClipRRect(
+              borderRadius: const BorderRadius.all(FuzzSpace.cardRadius),
+              child: ListView.separated(
+                itemCount: result.pages.length + result.skipped.length,
+                separatorBuilder: (_, _) => Divider(height: 1, color: c.border),
+                itemBuilder: (_, i) {
+                  if (i < result.pages.length) {
+                    return _pageTile(result.pages[i]);
+                  }
+                  return _skipTile(result.skipped[i - result.pages.length]);
+                },
+              ),
+            ),
           ),
         ),
       ],
@@ -458,8 +495,8 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Widget _pageTile(ScannedPage page) {
+    final c = context.fuzz;
     final hasError = page.error != null;
-    final scheme = Theme.of(context).colorScheme;
     return CheckboxListTile(
       controlAffinity: ListTileControlAffinity.leading,
       dense: true,
@@ -479,43 +516,62 @@ class _ScanScreenState extends State<ScanScreen> {
         page.title?.isNotEmpty == true ? page.title! : page.url,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
+        style: FuzzText.body.copyWith(color: c.textPrimary),
       ),
       subtitle: Text(
         hasError ? 'error: ${page.error}' : page.url,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          fontFamily: 'monospace',
-          fontSize: 12,
-          color: hasError ? scheme.error : scheme.onSurfaceVariant,
-        ),
+        style: FuzzText.mono
+            .copyWith(color: hasError ? c.dangerText : c.textMuted),
       ),
       secondary: Text(
         'd${page.depth}',
-        style: Theme.of(context).textTheme.labelSmall,
+        style: FuzzText.caption.copyWith(color: c.textMuted),
       ),
     );
   }
 
   Widget _skipTile(ScannedSkip skip) {
-    final scheme = Theme.of(context).colorScheme;
+    final c = context.fuzz;
     return ListTile(
       dense: true,
-      leading: Icon(Icons.block, size: 18, color: scheme.onSurfaceVariant),
+      leading: Icon(Icons.block, size: 18, color: c.textMuted),
       title: Text(
         skip.url,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+        style: FuzzText.mono.copyWith(color: c.textSecondary),
       ),
       subtitle: Text(
         'skipped — ${skip.reason}',
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: scheme.onSurfaceVariant,
-            ),
+        style: FuzzText.caption.copyWith(color: c.textMuted),
       ),
     );
   }
+}
+
+Widget _errorBanner(BuildContext context, String message) {
+  final c = context.fuzz;
+  return Container(
+    padding: const EdgeInsets.all(FuzzSpace.md),
+    decoration: BoxDecoration(
+      color: c.dangerBg,
+      borderRadius: const BorderRadius.all(FuzzSpace.controlRadius),
+      border: Border.all(color: c.border, width: 0.5),
+    ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(Icons.error_outline, size: 16, color: c.dangerText),
+        const SizedBox(width: FuzzSpace.sm),
+        Expanded(
+          child: Text(message,
+              style: FuzzText.body.copyWith(color: c.dangerText)),
+        ),
+      ],
+    ),
+  );
 }
 
 class _SaveAsDraft {
@@ -582,6 +638,7 @@ class _SaveAsDialogState extends State<_SaveAsDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.fuzz;
     return AlertDialog(
       title: const Text('Save as new project'),
       content: SizedBox(
@@ -656,10 +713,7 @@ class _SaveAsDialogState extends State<_SaveAsDialog> {
                 _computedPath.isEmpty
                     ? 'The folder will be created if it does not exist.'
                     : _computedPath,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontFamily: 'monospace',
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+                style: FuzzText.mono.copyWith(color: c.textMuted),
               ),
             ],
           ),

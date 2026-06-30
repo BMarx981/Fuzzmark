@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 
 import '../api/client.dart';
 import '../state/recents.dart';
+import '../theme/fuzzmark_tokens.dart';
+import '../theme/fuzzmark_widgets.dart';
 
 class ProjectsScreen extends StatefulWidget {
   const ProjectsScreen({
@@ -90,18 +92,25 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.fuzz;
     final paths = widget.recents.paths;
     return Scaffold(
+      backgroundColor: c.surface0,
       appBar: AppBar(
-        title: const Text('Fuzzmark'),
+        backgroundColor: c.surface2,
+        foregroundColor: c.textPrimary,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        shape: Border(bottom: BorderSide(color: c.border, width: 0.5)),
+        title: Text('Fuzzmark', style: FuzzText.title.copyWith(color: c.textPrimary)),
         actions: [
           if (_busy)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               child: SizedBox(
                 width: 18,
                 height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
+                child: CircularProgressIndicator(strokeWidth: 2, color: c.accentFill),
               ),
             ),
         ],
@@ -114,7 +123,9 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('Projects', style: Theme.of(context).textTheme.headlineSmall),
+                Text('Projects',
+                    style: FuzzText.title
+                        .copyWith(color: c.textPrimary, fontSize: 20)),
                 const SizedBox(height: 16),
                 Row(
                   children: [
@@ -132,44 +143,62 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                   ],
                 ),
                 const SizedBox(height: 32),
-                Text(
-                  'Recent',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
+                Text('Recent',
+                    style: FuzzText.title.copyWith(color: c.textPrimary)),
+                const SizedBox(height: FuzzSpace.sm),
                 if (paths.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 24),
-                    child: Text(
-                      'No recent projects yet. Create a new one or open an existing project.json.',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                    ),
+                  FuzzStateCard(
+                    kind: FuzzStateKind.empty,
+                    title: 'No recent projects',
+                    message:
+                        'Create a new project or open an existing project.json.',
+                    actionLabel: _busy ? null : 'New project',
+                    actionIcon: _busy ? null : Icons.add,
+                    onAction: _busy ? null : _createNew,
                   )
                 else
                   Expanded(
-                    child: ListView.separated(
-                      itemCount: paths.length,
-                      separatorBuilder: (_, _) => const Divider(height: 1),
-                      itemBuilder: (_, i) {
-                        final path = paths[i];
-                        return ListTile(
-                          leading: const Icon(Icons.description_outlined),
-                          title: Text(_basename(path)),
-                          subtitle: Text(
-                            path,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.close),
-                            tooltip: 'Forget',
-                            onPressed: _busy ? null : () => _forget(path),
-                          ),
-                          onTap: _busy ? null : () => _load(path),
-                        );
-                      },
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: c.surface2,
+                        borderRadius:
+                            const BorderRadius.all(FuzzSpace.cardRadius),
+                        border: Border.all(color: c.border, width: 0.5),
+                      ),
+                      child: ClipRRect(
+                        borderRadius:
+                            const BorderRadius.all(FuzzSpace.cardRadius),
+                        child: ListView.separated(
+                          itemCount: paths.length,
+                          separatorBuilder: (_, _) =>
+                              Divider(height: 1, color: c.border),
+                          itemBuilder: (_, i) {
+                            final path = paths[i];
+                            return ListTile(
+                              leading: Icon(Icons.description_outlined,
+                                  color: c.textSecondary),
+                              title: Text(
+                                _basename(path),
+                                style: FuzzText.body
+                                    .copyWith(color: c.textPrimary),
+                              ),
+                              subtitle: Text(
+                                path,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: FuzzText.mono
+                                    .copyWith(color: c.textMuted),
+                              ),
+                              trailing: IconButton(
+                                icon: Icon(Icons.close, color: c.textMuted),
+                                tooltip: 'Forget',
+                                onPressed: _busy ? null : () => _forget(path),
+                              ),
+                              onTap: _busy ? null : () => _load(path),
+                            );
+                          },
+                        ),
+                      ),
                     ),
                   ),
               ],
