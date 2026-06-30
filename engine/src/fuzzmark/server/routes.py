@@ -9,8 +9,10 @@ serializes the response.
 from __future__ import annotations
 
 import json
+import re
+import threading
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 from ..baselines import ApprovalResult, apply_approval, plan_approval
 from ..compare import DEFAULT_THRESHOLD, MaskRegion
@@ -23,6 +25,7 @@ from ..extractor import (
     extract_ctas as _real_extract_ctas,
     extract_fields as _real_extract_fields,
 )
+from ..jobs import Job, JobCancelled, create_job, get_job, spawn
 from ..project import (
     Project,
     ProjectError,
@@ -124,27 +127,49 @@ def _projects_set_base_url(payload: dict) -> dict:
     return _project_payload(path, project)
 
 
-def _projects_scan(payload: dict) -> dict:
-    """Crawl a project's base_url and return the discovered site map.
-
-    The scan result is not persisted here; the caller decides what to keep
-    by sending it back to `/api/projects/scan/save` with a selected subset.
-    """
+def _jobs_scan_start(payload: dict) -> dict:
+    """Validate a scan request, spawn a background scan job, return its id."""
     path = _require_str(payload, "path")
     project = _load_project(path)
     bounds = _parse_bounds(payload)
     headed = bool(payload.get("headed", False))
     session = project.session_resolved
     session_arg = str(session) if session is not None else None
+    job = create_job("scan")
+    spawn(
+        job,
+        _scan_worker,
+        base_url=project.base_url,
+        bounds=bounds,
+        headed=headed,
+        session=session_arg,
+    )
+    return _job_handle(job)
+
+
+def _scan_worker(
+    job: Job,
+    on_event: Callable[[dict], None],
+    cancel: threading.Event,
+    *,
+    base_url: str,
+    bounds: CrawlBounds,
+    headed: bool,
+    session: Optional[str],
+) -> dict:
     try:
         site = _crawl(
-            project.base_url,
+            base_url,
             bounds,
             headless=not headed,
-            session=session_arg,
+            session=session,
+            on_event=on_event,
+            cancel=cancel,
         )
-    except Exception as exc:  # noqa: BLE001 — surfaces as 500 with a tidy message
-        raise RouteError(500, f"scan failed: {exc}") from exc
+    except JobCancelled:
+        raise
+    except Exception as exc:  # noqa: BLE001 — surfaces as job error event
+        raise RuntimeError(f"scan failed: {exc}") from exc
     return {"site_map": site.to_dict()}
 
 
@@ -219,53 +244,75 @@ def _projects_pages(payload: dict) -> dict:
     return {"base_url": site_map.get("base_url", project.base_url), "pages": pages}
 
 
-def _projects_extract(payload: dict) -> dict:
-    """Extract interactive form fields from a page URL.
-
-    Drives the browser-backed extractor under the project's saved session
-    when present, so authenticated pages work. The injection seam is
-    `_extract_fields`; tests stub it to skip Playwright entirely.
-    """
+def _jobs_extract_start(payload: dict) -> dict:
+    """Validate an extract request, spawn a background job, return its id."""
     path = _require_str(payload, "path")
     url = _require_str(payload, "url")
     project = _load_project(path)
     session = project.session_resolved
+    job = create_job("extract")
+    spawn(
+        job,
+        _extract_worker,
+        url=url,
+        session=str(session) if session is not None else None,
+    )
+    return _job_handle(job)
+
+
+def _extract_worker(
+    job: Job,
+    on_event: Callable[[dict], None],
+    cancel: threading.Event,
+    *,
+    url: str,
+    session: Optional[str],
+) -> dict:
     try:
-        fields = _extract_fields(
-            url,
-            session=str(session) if session is not None else None,
-        )
+        fields = _extract_fields(url, session=session)
+    except JobCancelled:
+        raise
     except Exception as exc:  # noqa: BLE001
-        raise RouteError(500, f"extract failed: {exc}") from exc
+        raise RuntimeError(f"extract failed: {exc}") from exc
     return {"url": url, "fields": [_field_to_dict(f) for f in fields]}
 
 
-def _projects_ctas(payload: dict) -> dict:
-    """Extract clickable CTAs (buttons + link CTAs) from a page URL.
-
-    Mirrors `_projects_extract`: drives the browser-backed CTA walker under
-    the project's saved session when present. The injection seam is
-    `_extract_ctas`; tests stub it to skip Playwright entirely.
-    """
+def _jobs_ctas_start(payload: dict) -> dict:
+    """Validate a CTAs request, spawn a background job, return its id."""
     path = _require_str(payload, "path")
     url = _require_str(payload, "url")
     project = _load_project(path)
     session = project.session_resolved
+    job = create_job("ctas")
+    spawn(
+        job,
+        _ctas_worker,
+        url=url,
+        session=str(session) if session is not None else None,
+    )
+    return _job_handle(job)
+
+
+def _ctas_worker(
+    job: Job,
+    on_event: Callable[[dict], None],
+    cancel: threading.Event,
+    *,
+    url: str,
+    session: Optional[str],
+) -> dict:
     try:
-        ctas = _extract_ctas(
-            url,
-            session=str(session) if session is not None else None,
-        )
+        ctas = _extract_ctas(url, session=session)
+    except JobCancelled:
+        raise
     except Exception as exc:  # noqa: BLE001
-        raise RouteError(500, f"ctas failed: {exc}") from exc
+        raise RuntimeError(f"ctas failed: {exc}") from exc
     return {"url": url, "ctas": [c.to_dict() for c in ctas]}
 
 
-def _projects_suggest(payload: dict) -> dict:
-    """Generate suggestions for a list of fields against the project's tables.
-
-    Pure: no browser. Honors the project's custom-tables file when present.
-    The `fields` payload uses the same shape `_projects_extract` returns.
+def _jobs_suggest_start(payload: dict) -> dict:
+    """Validate suggestions request, spawn job, return id. (Suggest is CPU-only
+    but follows the same job pattern for uniformity in the client.)
     """
     path = _require_str(payload, "path")
     raw_fields = payload.get("fields")
@@ -281,6 +328,19 @@ def _projects_suggest(payload: dict) -> dict:
             raise RouteError(400, f"custom tables load failed: {exc}") from exc
     else:
         tables = None
+    job = create_job("suggest")
+    spawn(job, _suggest_worker, fields=fields, tables=tables)
+    return _job_handle(job)
+
+
+def _suggest_worker(
+    job: Job,
+    on_event: Callable[[dict], None],
+    cancel: threading.Event,
+    *,
+    fields: list[Field],
+    tables: object,
+) -> dict:
     suggestions = suggest_all(fields, tables=tables)
     return {
         "suggestions": {
@@ -340,14 +400,12 @@ def _projects_tests_save(payload: dict) -> dict:
     return out
 
 
-def _projects_tests_run(payload: dict) -> dict:
-    """Execute one of the project's tests and return the RunResult.
+def _jobs_run_start(payload: dict) -> dict:
+    """Validate a test-run request, spawn a background run job, return its id.
 
-    The test is identified by `test` — either a path relative to the project
-    directory (matching what `project.tests` stores) or an absolute path that
-    must resolve under the project root. Screenshots and a `result.json` are
-    written to `<source_dir>/runs/<test-stem>/`, overwritten on each run.
-    The injection seam is `_run_flow`; tests stub it to skip Playwright.
+    Screenshots and a `result.json` are written to `<source_dir>/runs/
+    <test-stem>/`, overwritten on each run. The injection seam for the
+    flow itself stays `_run_flow`; tests stub it to skip Playwright.
     """
     path = _require_str(payload, "path")
     test_rel = _require_str(payload, "test")
@@ -375,6 +433,33 @@ def _projects_tests_run(payload: dict) -> dict:
             slow_mo_ms = max(0, int(slow_mo_raw))
         except (TypeError, ValueError) as exc:
             raise RouteError(400, f"'slow_mo_ms' must be an integer: {exc}") from exc
+
+    job = create_job("run")
+    spawn(
+        job,
+        _run_worker,
+        test=test,
+        run_dir=run_dir,
+        viewport=viewport,
+        headed=headed,
+        slow_mo_ms=slow_mo_ms,
+        session=str(session) if session is not None else None,
+    )
+    return _job_handle(job)
+
+
+def _run_worker(
+    job: Job,
+    on_event: Callable[[dict], None],
+    cancel: threading.Event,
+    *,
+    test,
+    run_dir: Path,
+    viewport: tuple[int, int],
+    headed: bool,
+    slow_mo_ms: int,
+    session: Optional[str],
+) -> dict:
     try:
         result = _run_flow(
             test,
@@ -382,10 +467,13 @@ def _projects_tests_run(payload: dict) -> dict:
             viewport=viewport,
             headless=not headed,
             slow_mo_ms=slow_mo_ms,
-            session=str(session) if session is not None else None,
+            session=session,
+            on_event=on_event,
+            cancel=cancel,
         )
-    except Exception as exc:  # noqa: BLE001 — surfaces as 500 with a tidy message
-        raise RouteError(500, f"run failed: {exc}") from exc
+    except Exception:
+        # Re-raise as-is so JobCancelled stays JobCancelled.
+        raise
 
     result_dict = result.to_dict()
     result_path = run_dir / RUN_RESULT_FILENAME
@@ -683,24 +771,63 @@ def _path_or_none(p: Path | None) -> str | None:
     return str(p) if p is not None else None
 
 
+def _job_handle(job: Job) -> dict:
+    """Compact response a job-start route returns to the caller."""
+    return {"job_id": job.id, "kind": job.kind}
+
+
+def _jobs_get(job_id: str, _payload: dict) -> dict:
+    """Return the current snapshot of a job, or 404."""
+    job = get_job(job_id)
+    if job is None:
+        raise RouteError(404, f"job not found: {job_id}")
+    return job.snapshot()
+
+
+def _jobs_cancel(job_id: str, _payload: dict) -> dict:
+    """Set the cancel flag on a job; the worker stops at the next checkpoint."""
+    job = get_job(job_id)
+    if job is None:
+        raise RouteError(404, f"job not found: {job_id}")
+    job.cancel_event.set()
+    return {"ok": True, "job_id": job_id}
+
+
 Route = Callable[[dict], dict]
+TemplatedRoute = Callable[[str, dict], dict]
 
 ROUTES: dict[tuple[str, str], Route] = {
     ("GET", "/api/health"): _health,
     ("POST", "/api/projects/load"): _projects_load,
     ("POST", "/api/projects/init"): _projects_init,
     ("POST", "/api/projects/base_url"): _projects_set_base_url,
-    ("POST", "/api/projects/scan"): _projects_scan,
     ("POST", "/api/projects/scan/save"): _projects_scan_save,
     ("POST", "/api/projects/pages"): _projects_pages,
-    ("POST", "/api/projects/extract"): _projects_extract,
-    ("POST", "/api/projects/ctas"): _projects_ctas,
-    ("POST", "/api/projects/suggest"): _projects_suggest,
     ("POST", "/api/projects/tests/save"): _projects_tests_save,
-    ("POST", "/api/projects/tests/run"): _projects_tests_run,
     ("POST", "/api/projects/tests/report"): _projects_tests_report,
     ("POST", "/api/projects/baselines/approve"): _projects_baselines_approve,
+    ("POST", "/api/jobs/run"): _jobs_run_start,
+    ("POST", "/api/jobs/scan"): _jobs_scan_start,
+    ("POST", "/api/jobs/extract"): _jobs_extract_start,
+    ("POST", "/api/jobs/ctas"): _jobs_ctas_start,
+    ("POST", "/api/jobs/suggest"): _jobs_suggest_start,
 }
+
+
+_JOB_GET_RE = re.compile(r"^/api/jobs/(?P<id>[a-zA-Z0-9_-]+)$")
+_JOB_CANCEL_RE = re.compile(r"^/api/jobs/(?P<id>[a-zA-Z0-9_-]+)/cancel$")
+_JOB_EVENTS_RE = re.compile(r"^/api/jobs/(?P<id>[a-zA-Z0-9_-]+)/events$")
+
+TEMPLATED_ROUTES: list[tuple[str, "re.Pattern[str]", TemplatedRoute]] = [
+    ("GET", _JOB_GET_RE, _jobs_get),
+    ("POST", _JOB_CANCEL_RE, _jobs_cancel),
+]
+
+
+def parse_job_events_path(path: str) -> Optional[str]:
+    """Return the job id when `path` matches `/api/jobs/{id}/events`, else None."""
+    m = _JOB_EVENTS_RE.match(path)
+    return m.group("id") if m else None
 
 
 def dispatch(method: str, path: str, payload: dict) -> dict:
@@ -709,7 +836,14 @@ def dispatch(method: str, path: str, payload: dict) -> dict:
     Raises `RouteError(404)` when no route matches. Route exceptions
     propagate as-is.
     """
-    handler = ROUTES.get((method.upper(), path))
-    if handler is None:
-        raise RouteError(404, f"no route for {method} {path}")
-    return handler(payload)
+    method_u = method.upper()
+    handler = ROUTES.get((method_u, path))
+    if handler is not None:
+        return handler(payload)
+    for tmethod, regex, thandler in TEMPLATED_ROUTES:
+        if tmethod != method_u:
+            continue
+        m = regex.match(path)
+        if m:
+            return thandler(m.group("id"), payload)
+    raise RouteError(404, f"no route for {method} {path}")

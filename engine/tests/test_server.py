@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -17,10 +18,32 @@ import pytest
 
 from fuzzmark.driver import CaptureArtifact, RunResult
 from fuzzmark.extractor import CTA, Field, Option, Validation
+from fuzzmark.jobs import TERMINAL_STATES, get_job
 from fuzzmark.scanner import CrawlBounds, Page, SiteMap, SkippedUrl
 from fuzzmark.server import RouteError, dispatch, make_server
 from fuzzmark.server import routes as server_routes
 from fuzzmark.server.app import bound_address
+
+
+def _await_job_result(handle: dict, *, timeout: float = 5.0) -> dict:
+    """Wait for a freshly-started job to terminate; return its result dict.
+
+    Raises an AssertionError if the job errors out or times out. Stubs
+    inject quick code paths so workers usually return within a few ms.
+    """
+    job_id = handle["job_id"]
+    job = get_job(job_id)
+    assert job is not None, f"job {job_id} not found in registry"
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if job.state in TERMINAL_STATES:
+            break
+        time.sleep(0.005)
+    assert job.state in TERMINAL_STATES, f"job did not terminate (state={job.state})"
+    if job.error:
+        raise AssertionError(f"job errored: {job.error}")
+    assert job.result is not None, "finished job has no result dict"
+    return job.result
 
 
 class TestDispatch:
@@ -118,11 +141,13 @@ class TestScanRoutes:
         return path
 
     def _stub_crawl(self, captured: dict) -> object:
-        def fake(base_url, bounds, *, headless=True, session=None):
+        def fake(base_url, bounds, *, headless=True, session=None, on_event=None, cancel=None):
             captured["base_url"] = base_url
             captured["bounds"] = bounds
             captured["headless"] = headless
             captured["session"] = session
+            captured["on_event_is_callable"] = callable(on_event)
+            captured["cancel_supplied"] = cancel is not None
             return SiteMap(
                 base_url=base_url,
                 bounds=bounds,
@@ -153,9 +178,9 @@ class TestScanRoutes:
         captured: dict = {}
         monkeypatch.setattr(server_routes, "_crawl", self._stub_crawl(captured))
 
-        body = dispatch(
+        handle = dispatch(
             "POST",
-            "/api/projects/scan",
+            "/api/jobs/scan",
             {
                 "path": path,
                 "max_depth": 1,
@@ -165,6 +190,8 @@ class TestScanRoutes:
                 "rate_limit": 0.25,
             },
         )
+        assert handle["kind"] == "scan"
+        result = _await_job_result(handle)
 
         assert captured["base_url"] == "http://example.test/"
         bounds = captured["bounds"]
@@ -176,8 +203,10 @@ class TestScanRoutes:
         assert bounds.rate_limit_seconds == 0.25
         assert captured["headless"] is True
         assert captured["session"] is None
+        assert captured["on_event_is_callable"] is True
+        assert captured["cancel_supplied"] is True
 
-        site_map = body["site_map"]
+        site_map = result["site_map"]
         assert site_map["page_count"] == 2
         assert site_map["skipped_count"] == 1
         assert [p["url"] for p in site_map["pages"]] == [
@@ -189,7 +218,7 @@ class TestScanRoutes:
         with pytest.raises(RouteError) as excinfo:
             dispatch(
                 "POST",
-                "/api/projects/scan",
+                "/api/jobs/scan",
                 {"path": str(tmp_path / "missing.json")},
             )
         assert excinfo.value.status == 400
@@ -208,7 +237,7 @@ class TestScanRoutes:
         with pytest.raises(RouteError) as excinfo:
             dispatch(
                 "POST",
-                "/api/projects/scan",
+                "/api/jobs/scan",
                 {"path": path, "max_pages": 0},
             )
         assert excinfo.value.status == 400
@@ -370,16 +399,18 @@ class TestExtractRoute:
             ]
 
         monkeypatch.setattr(server_routes, "_extract_fields", fake_extract)
-        body = dispatch(
+        handle = dispatch(
             "POST",
-            "/api/projects/extract",
+            "/api/jobs/extract",
             {"path": path, "url": "http://x/login"},
         )
+        assert handle["kind"] == "extract"
+        result = _await_job_result(handle)
         assert captured["url"] == "http://x/login"
         assert captured["session"] is None
-        assert body["url"] == "http://x/login"
-        assert len(body["fields"]) == 1
-        f = body["fields"][0]
+        assert result["url"] == "http://x/login"
+        assert len(result["fields"]) == 1
+        f = result["fields"][0]
         assert f["selector"] == "#email"
         assert f["validation"]["required"] is True
         assert f["validation"]["maxlength"] == 64
@@ -422,16 +453,18 @@ class TestCtasRoute:
             ]
 
         monkeypatch.setattr(server_routes, "_extract_ctas", fake_ctas)
-        body = dispatch(
+        handle = dispatch(
             "POST",
-            "/api/projects/ctas",
+            "/api/jobs/ctas",
             {"path": path, "url": "http://x/form"},
         )
+        assert handle["kind"] == "ctas"
+        result = _await_job_result(handle)
         assert captured["url"] == "http://x/form"
         assert captured["session"] is None
-        assert body["url"] == "http://x/form"
-        assert len(body["ctas"]) == 2
-        first, second = body["ctas"]
+        assert result["url"] == "http://x/form"
+        assert len(result["ctas"]) == 2
+        first, second = result["ctas"]
         assert first["selector"] == "#send"
         assert first["kind"] == "button"
         assert first["label"] == "Send"
@@ -442,7 +475,7 @@ class TestCtasRoute:
     def test_ctas_requires_url(self, tmp_path: Path) -> None:
         path = self._init_project(tmp_path)
         with pytest.raises(RouteError) as excinfo:
-            dispatch("POST", "/api/projects/ctas", {"path": path})
+            dispatch("POST", "/api/jobs/ctas", {"path": path})
         assert excinfo.value.status == 400
         assert "url" in excinfo.value.message
 
@@ -480,12 +513,13 @@ class TestSuggestRoute:
                 options=[Option(value="us", label="USA"), Option(value="ca", label="Canada")],
             ).to_dict(),
         ]
-        body = dispatch(
+        handle = dispatch(
             "POST",
-            "/api/projects/suggest",
+            "/api/jobs/suggest",
             {"path": path, "fields": fields},
         )
-        sug = body["suggestions"]
+        result = _await_job_result(handle)
+        sug = result["suggestions"]
         assert "#email" in sug and "#country" in sug
         email_categories = {s["category"] for s in sug["#email"]}
         assert "empty" in email_categories
@@ -525,9 +559,9 @@ class TestSuggestRoute:
             ),
             encoding="utf-8",
         )
-        body = dispatch(
+        handle = dispatch(
             "POST",
-            "/api/projects/suggest",
+            "/api/jobs/suggest",
             {
                 "path": path,
                 "fields": [
@@ -543,7 +577,8 @@ class TestSuggestRoute:
                 ],
             },
         )
-        values = [s["value"] for s in body["suggestions"]["#email"]]
+        result = _await_job_result(handle)
+        values = [s["value"] for s in result["suggestions"]["#email"]]
         assert "ceo@acme.com" in values
 
     def test_rejects_non_list_fields(self, tmp_path: Path) -> None:
@@ -551,7 +586,7 @@ class TestSuggestRoute:
         with pytest.raises(RouteError) as excinfo:
             dispatch(
                 "POST",
-                "/api/projects/suggest",
+                "/api/jobs/suggest",
                 {"path": path, "fields": "nope"},
             )
         assert excinfo.value.status == 400
@@ -677,12 +712,24 @@ class TestTestsRunRoute:
         return path, body["tests"][0]
 
     def _stub_run(self, captured: dict, run_dir_capture: dict) -> object:
-        def fake(test, output_dir, *, viewport, headless, session, slow_mo_ms=0):
+        def fake(
+            test,
+            output_dir,
+            *,
+            viewport,
+            headless,
+            session,
+            slow_mo_ms=0,
+            on_event=None,
+            cancel=None,
+        ):
             captured["test_name"] = test.name
             captured["viewport"] = viewport
             captured["headless"] = headless
             captured["session"] = session
             captured["slow_mo_ms"] = slow_mo_ms
+            captured["on_event_is_callable"] = callable(on_event)
+            captured["cancel_supplied"] = cancel is not None
             run_dir_capture["dir"] = Path(output_dir)
             screenshot = Path(output_dir) / "home.png"
             screenshot.parent.mkdir(parents=True, exist_ok=True)
@@ -710,22 +757,26 @@ class TestTestsRunRoute:
             server_routes, "_run_flow", self._stub_run(captured, run_dir_capture)
         )
 
-        body = dispatch(
+        handle = dispatch(
             "POST",
-            "/api/projects/tests/run",
+            "/api/jobs/run",
             {"path": path, "test": test_rel},
         )
+        assert handle["kind"] == "run"
+        result = _await_job_result(handle)
 
         assert captured["test_name"] == "smoke"
         assert captured["viewport"] == (1024, 768)
         assert captured["headless"] is True
         assert captured["session"] is None
         assert captured["slow_mo_ms"] == 0
+        assert captured["on_event_is_callable"] is True
+        assert captured["cancel_supplied"] is True
         assert run_dir_capture["dir"] == tmp_path / "runs" / "smoke"
-        assert body["result"]["test_name"] == "smoke"
-        assert body["result"]["captures"][0]["name"] == "home"
-        assert body["run_dir"] == str((tmp_path / "runs" / "smoke").resolve())
-        result_path = Path(body["result_path"])
+        assert result["result"]["test_name"] == "smoke"
+        assert result["result"]["captures"][0]["name"] == "home"
+        assert result["run_dir"] == str((tmp_path / "runs" / "smoke").resolve())
+        result_path = Path(result["result_path"])
         assert result_path.exists()
         on_disk = json.loads(result_path.read_text(encoding="utf-8"))
         assert on_disk["test_name"] == "smoke"
@@ -739,11 +790,12 @@ class TestTestsRunRoute:
             server_routes, "_run_flow", self._stub_run(captured, {})
         )
 
-        dispatch(
+        handle = dispatch(
             "POST",
-            "/api/projects/tests/run",
+            "/api/jobs/run",
             {"path": path, "test": test_rel, "headed": True},
         )
+        _await_job_result(handle)
         assert captured["headless"] is False
         assert captured["slow_mo_ms"] == 250
 
@@ -760,7 +812,7 @@ class TestTestsRunRoute:
         with pytest.raises(RouteError) as excinfo:
             dispatch(
                 "POST",
-                "/api/projects/tests/run",
+                "/api/jobs/run",
                 {"path": path, "test": str(outside)},
             )
         assert excinfo.value.status == 400
@@ -777,7 +829,7 @@ class TestTestsRunRoute:
         with pytest.raises(RouteError) as excinfo:
             dispatch(
                 "POST",
-                "/api/projects/tests/run",
+                "/api/jobs/run",
                 {"path": path, "test": "tests/nope.json"},
             )
         assert excinfo.value.status == 400
@@ -1061,3 +1113,185 @@ def _post_json(url: str, body: dict) -> dict:
     )
     with urllib.request.urlopen(req) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+class TestJobsLifecycle:
+    def _init_project(self, tmp_path: Path) -> str:
+        path = str(tmp_path / "project.json")
+        dispatch(
+            "POST",
+            "/api/projects/init",
+            {"path": path, "name": "demo", "base_url": "http://x/"},
+        )
+        return path
+
+    def test_job_snapshot_after_finish(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = self._init_project(tmp_path)
+
+        def fake_extract(url, *, session=None):
+            return []
+
+        monkeypatch.setattr(server_routes, "_extract_fields", fake_extract)
+        handle = dispatch(
+            "POST", "/api/jobs/extract", {"path": path, "url": "http://x/"}
+        )
+        _await_job_result(handle)
+        snap = dispatch("GET", f"/api/jobs/{handle['job_id']}", {})
+        assert snap["job_id"] == handle["job_id"]
+        assert snap["kind"] == "extract"
+        assert snap["state"] == "finished"
+        assert snap["result"]["url"] == "http://x/"
+
+    def test_job_snapshot_unknown_id_404(self) -> None:
+        with pytest.raises(RouteError) as excinfo:
+            dispatch("GET", "/api/jobs/no-such-id", {})
+        assert excinfo.value.status == 404
+
+    def test_cancel_sets_flag(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = self._init_project(tmp_path)
+        started = threading.Event()
+        release = threading.Event()
+
+        def fake_crawl(base_url, bounds, *, on_event=None, cancel=None, **_kw):
+            started.set()
+            release.wait(timeout=2.0)
+            assert cancel is not None and cancel.is_set()
+            from fuzzmark.jobs import JobCancelled
+
+            raise JobCancelled()
+
+        monkeypatch.setattr(server_routes, "_crawl", fake_crawl)
+        handle = dispatch("POST", "/api/jobs/scan", {"path": path})
+        assert started.wait(timeout=2.0)
+        ack = dispatch("POST", f"/api/jobs/{handle['job_id']}/cancel", {})
+        assert ack["ok"] is True
+        release.set()
+        # Job ends with state=cancelled (not finished).
+        job = get_job(handle["job_id"])
+        assert job is not None
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            if job.state == "cancelled":
+                break
+            time.sleep(0.005)
+        assert job.state == "cancelled"
+
+    def test_cancel_unknown_id_404(self) -> None:
+        with pytest.raises(RouteError) as excinfo:
+            dispatch("POST", "/api/jobs/no-such-id/cancel", {})
+        assert excinfo.value.status == 404
+
+
+class TestSse:
+    """End-to-end SSE: bind a real socket, drive a job, parse events."""
+
+    def _init_project(self, tmp_path: Path) -> str:
+        path = str(tmp_path / "project.json")
+        dispatch(
+            "POST",
+            "/api/projects/init",
+            {"path": path, "name": "demo", "base_url": "http://x/"},
+        )
+        return path
+
+    def test_stream_yields_job_started_and_finished(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = self._init_project(tmp_path)
+
+        def fake_extract(url, *, session=None):
+            return []
+
+        monkeypatch.setattr(server_routes, "_extract_fields", fake_extract)
+
+        server = make_server(host="127.0.0.1", port=0)
+        host, port = bound_address(server)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://{host}:{port}"
+            handle = _post_json(
+                f"{base}/api/jobs/extract", {"path": path, "url": "http://x/"}
+            )
+            events = _read_sse(f"{base}/api/jobs/{handle['job_id']}/events", timeout=3.0)
+            kinds = [e["event"] for e in events]
+            assert kinds[0] == "job_started"
+            assert kinds[-1] == "finished"
+            assert events[-1]["result"]["url"] == "http://x/"
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_stream_replays_history_after_terminal(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = self._init_project(tmp_path)
+
+        def fake_extract(url, *, session=None):
+            return []
+
+        monkeypatch.setattr(server_routes, "_extract_fields", fake_extract)
+
+        server = make_server(host="127.0.0.1", port=0)
+        host, port = bound_address(server)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = f"http://{host}:{port}"
+            handle = _post_json(
+                f"{base}/api/jobs/extract", {"path": path, "url": "http://x/"}
+            )
+            _await_job_result(handle)
+            # Subscribe AFTER the job is already terminal — should still see history.
+            events = _read_sse(f"{base}/api/jobs/{handle['job_id']}/events", timeout=3.0)
+            kinds = [e["event"] for e in events]
+            assert kinds == ["job_started", "finished"]
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_unknown_job_returns_404(self, tmp_path: Path) -> None:
+        server = make_server(host="127.0.0.1", port=0)
+        host, port = bound_address(server)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with pytest.raises(urllib.error.HTTPError) as excinfo:
+                urllib.request.urlopen(
+                    f"http://{host}:{port}/api/jobs/no-such/events"
+                )
+            assert excinfo.value.code == 404
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+
+def _read_sse(url: str, *, timeout: float) -> list[dict]:
+    """Read an SSE stream until the connection closes; return parsed events.
+
+    Workers in tests finish quickly, so the stream ends shortly after the
+    terminal event. Ignores comment frames (lines starting with ':').
+    """
+    events: list[dict] = []
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        buf = b""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            chunk = resp.read(1024)
+            if not chunk:
+                break
+            buf += chunk
+            while b"\n\n" in buf:
+                raw, buf = buf.split(b"\n\n", 1)
+                line = raw.decode("utf-8", errors="replace")
+                for sub in line.splitlines():
+                    if sub.startswith("data:"):
+                        events.append(json.loads(sub[5:].strip()))
+    return events
