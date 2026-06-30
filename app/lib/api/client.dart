@@ -544,6 +544,211 @@ class ApprovalResult {
       );
 }
 
+class JobHandle {
+  const JobHandle({required this.jobId, required this.kind});
+
+  final String jobId;
+  final String kind;
+
+  factory JobHandle.fromJson(Map<String, dynamic> json) => JobHandle(
+        jobId: json['job_id'] as String,
+        kind: json['kind'] as String,
+      );
+
+  @override
+  String toString() => 'JobHandle($kind:$jobId)';
+}
+
+class JobSnapshot {
+  const JobSnapshot({
+    required this.jobId,
+    required this.kind,
+    required this.state,
+    required this.startedAt,
+    required this.result,
+    required this.error,
+  });
+
+  final String jobId;
+  final String kind;
+  final String state;
+  final double startedAt;
+  final Map<String, dynamic>? result;
+  final String? error;
+
+  bool get isTerminal =>
+      state == 'finished' || state == 'cancelled' || state == 'error';
+
+  factory JobSnapshot.fromJson(Map<String, dynamic> json) => JobSnapshot(
+        jobId: json['job_id'] as String,
+        kind: json['kind'] as String,
+        state: json['state'] as String,
+        startedAt: (json['started_at'] as num?)?.toDouble() ?? 0.0,
+        result: json['result'] as Map<String, dynamic>?,
+        error: json['error'] as String?,
+      );
+}
+
+sealed class RunEvent {
+  const RunEvent();
+}
+
+class RunJobStarted extends RunEvent {
+  const RunJobStarted();
+}
+
+class RunStarted extends RunEvent {
+  const RunStarted({
+    required this.testName,
+    required this.totalSteps,
+    required this.viewports,
+  });
+
+  final String testName;
+  final int totalSteps;
+  final List<String> viewports;
+}
+
+class RunStepStarted extends RunEvent {
+  const RunStepStarted({
+    required this.index,
+    required this.kind,
+    required this.viewport,
+  });
+
+  final int index;
+  final String kind;
+  final String? viewport;
+}
+
+class RunStepFinished extends RunEvent {
+  const RunStepFinished({
+    required this.index,
+    required this.kind,
+    required this.viewport,
+  });
+
+  final int index;
+  final String kind;
+  final String? viewport;
+}
+
+class RunCaptureEvent extends RunEvent {
+  const RunCaptureEvent(this.capture);
+
+  final RunCapture capture;
+}
+
+class RunConsoleErrorEvent extends RunEvent {
+  const RunConsoleErrorEvent({required this.message, required this.viewport});
+
+  final RunConsoleMessage message;
+  final String? viewport;
+}
+
+class RunPageErrorEvent extends RunEvent {
+  const RunPageErrorEvent({required this.message, required this.viewport});
+
+  final String message;
+  final String? viewport;
+}
+
+class RunFailedRequestEvent extends RunEvent {
+  const RunFailedRequestEvent({required this.request, required this.viewport});
+
+  final RunFailedRequest request;
+  final String? viewport;
+}
+
+class RunFinished extends RunEvent {
+  const RunFinished(this.result);
+
+  final RunResult result;
+}
+
+class RunCancelled extends RunEvent {
+  const RunCancelled();
+}
+
+class RunErrored extends RunEvent {
+  const RunErrored(this.message);
+
+  final String message;
+}
+
+class RunUnknownEvent extends RunEvent {
+  const RunUnknownEvent(this.kind, this.raw);
+
+  final String kind;
+  final Map<String, dynamic> raw;
+}
+
+sealed class ScanEvent {
+  const ScanEvent();
+}
+
+class ScanJobStarted extends ScanEvent {
+  const ScanJobStarted();
+}
+
+class ScanStarted extends ScanEvent {
+  const ScanStarted({
+    required this.baseUrl,
+    required this.maxDepth,
+    required this.maxPages,
+  });
+
+  final String baseUrl;
+  final int maxDepth;
+  final int maxPages;
+}
+
+class ScanPageFound extends ScanEvent {
+  const ScanPageFound({
+    required this.url,
+    required this.depth,
+    required this.title,
+    required this.error,
+    required this.ctaCount,
+  });
+
+  final String url;
+  final int depth;
+  final String? title;
+  final String? error;
+  final int ctaCount;
+}
+
+class ScanPageSkipped extends ScanEvent {
+  const ScanPageSkipped({required this.url, required this.reason});
+
+  final String url;
+  final String reason;
+}
+
+class ScanFinished extends ScanEvent {
+  const ScanFinished(this.result);
+
+  final ScanResult result;
+}
+
+class ScanCancelled extends ScanEvent {
+  const ScanCancelled();
+}
+
+class ScanErrored extends ScanEvent {
+  const ScanErrored(this.message);
+
+  final String message;
+}
+
+class ScanUnknownEvent extends ScanEvent {
+  const ScanUnknownEvent(this.kind, this.raw);
+
+  final String kind;
+  final Map<String, dynamic> raw;
+}
+
 class FuzzmarkApi {
   FuzzmarkApi({Uri? baseUri, http.Client? client})
       : baseUri = baseUri ?? Uri.parse('http://127.0.0.1:8765'),
@@ -564,15 +769,102 @@ class FuzzmarkApi {
     return FuzzmarkProject.fromJson(res);
   }
 
+  Future<JobHandle> startScan({
+    required String projectPath,
+    CrawlBoundsRequest bounds = const CrawlBoundsRequest(),
+  }) async {
+    final res = await _post('/api/jobs/scan', {
+      'path': projectPath,
+      ...bounds.toJson(),
+    });
+    return JobHandle.fromJson(res);
+  }
+
+  Stream<ScanEvent> streamScanEvents(JobHandle handle) async* {
+    await for (final raw in _streamJobEvents(handle.jobId)) {
+      yield _parseScanEvent(raw);
+    }
+  }
+
+  Future<ScanResult> fetchScanResult(JobHandle handle) async {
+    final snapshot = await fetchJob(handle.jobId);
+    return _scanResultFromSnapshot(snapshot);
+  }
+
+  Future<JobHandle> startRun({
+    required String projectPath,
+    required String testRelativePath,
+    bool headed = false,
+    int? slowMoMs,
+  }) async {
+    final res = await _post('/api/jobs/run', {
+      'path': projectPath,
+      'test': testRelativePath,
+      if (headed) 'headed': true,
+      'slow_mo_ms': ?slowMoMs,
+    });
+    return JobHandle.fromJson(res);
+  }
+
+  Stream<RunEvent> streamRunEvents(JobHandle handle) async* {
+    await for (final raw in _streamJobEvents(handle.jobId)) {
+      yield _parseRunEvent(raw);
+    }
+  }
+
+  Future<RunResult> fetchRunResult(JobHandle handle) async {
+    final snapshot = await fetchJob(handle.jobId);
+    return _runResultFromSnapshot(snapshot);
+  }
+
+  Future<JobSnapshot> fetchJob(String jobId) async {
+    final res = await _get('/api/jobs/$jobId');
+    return JobSnapshot.fromJson(res);
+  }
+
+  Future<void> cancelJob(String jobId) async {
+    await _post('/api/jobs/$jobId/cancel', const {});
+  }
+
+  /// Start a background job, drain its SSE stream, and return the worker's
+  /// terminal `result` dict. Throws on `cancelled` / `error` terminal events.
+  /// Used for the cheap one-shot endpoints whose call sites don't need
+  /// progress events.
+  Future<Map<String, dynamic>> runJobToCompletion(
+    String kind,
+    Map<String, dynamic> body,
+  ) async {
+    final handle = await _startJob(kind, body);
+    await for (final raw in _streamJobEvents(handle.jobId)) {
+      final eventKind = raw['event'] as String?;
+      if (eventKind == 'finished') {
+        return (raw['result'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+      }
+      if (eventKind == 'cancelled') {
+        throw EngineApiException(0, '$kind job cancelled');
+      }
+      if (eventKind == 'error') {
+        throw EngineApiException(
+          500,
+          (raw['message'] as String?) ?? '$kind failed',
+        );
+      }
+    }
+    throw EngineApiException(
+      0,
+      '$kind job stream ended without a terminal event',
+    );
+  }
+
   Future<ScanResult> runScan({
     required String projectPath,
     CrawlBoundsRequest bounds = const CrawlBoundsRequest(),
   }) async {
-    final res = await _post('/api/projects/scan', {
+    final result = await runJobToCompletion('scan', {
       'path': projectPath,
       ...bounds.toJson(),
     });
-    final siteMap = res['site_map'] as Map<String, dynamic>;
+    final siteMap = result['site_map'] as Map<String, dynamic>;
     return ScanResult.fromJson(siteMap);
   }
 
@@ -600,7 +892,7 @@ class FuzzmarkApi {
     required String projectPath,
     required String url,
   }) async {
-    final res = await _post('/api/projects/extract', {
+    final res = await runJobToCompletion('extract', {
       'path': projectPath,
       'url': url,
     });
@@ -613,7 +905,7 @@ class FuzzmarkApi {
     required String projectPath,
     required String url,
   }) async {
-    final res = await _post('/api/projects/ctas', {
+    final res = await runJobToCompletion('ctas', {
       'path': projectPath,
       'url': url,
     });
@@ -626,7 +918,7 @@ class FuzzmarkApi {
     required String projectPath,
     required List<ExtractedField> fields,
   }) async {
-    final res = await _post('/api/projects/suggest', {
+    final res = await runJobToCompletion('suggest', {
       'path': projectPath,
       'fields': fields.map((f) => f.toJson()).toList(),
     });
@@ -659,12 +951,12 @@ class FuzzmarkApi {
     required String testRelativePath,
     bool headed = false,
   }) async {
-    final res = await _post('/api/projects/tests/run', {
+    final result = await runJobToCompletion('run', {
       'path': projectPath,
       'test': testRelativePath,
       if (headed) 'headed': true,
     });
-    return RunResult.fromJson(res);
+    return RunResult.fromJson(result);
   }
 
   Future<RunReport> reportTest({
@@ -721,6 +1013,195 @@ class FuzzmarkApi {
       'base_url': baseUrl,
     });
     return FuzzmarkProject.fromJson(res);
+  }
+
+  Future<JobHandle> _startJob(String kind, Map<String, dynamic> body) async {
+    final res = await _post('/api/jobs/$kind', body);
+    return JobHandle.fromJson(res);
+  }
+
+  /// Stream the raw JSON event objects from a job's SSE endpoint until the
+  /// terminal event is consumed and the engine closes the connection. SSE
+  /// keepalive comments (`: …`) are silently dropped.
+  Stream<Map<String, dynamic>> _streamJobEvents(String jobId) async* {
+    final uri = baseUri.replace(path: '/api/jobs/$jobId/events');
+    final request = http.Request('GET', uri)
+      ..headers['Accept'] = 'text/event-stream';
+    final response = await _client.send(request);
+    if (response.statusCode >= 400) {
+      final body = await response.stream.bytesToString();
+      Map<String, dynamic> decoded = const {};
+      if (body.isNotEmpty) {
+        try {
+          decoded = jsonDecode(body) as Map<String, dynamic>;
+        } catch (_) {
+          // fall through to body-as-message
+        }
+      }
+      final msg = decoded['error']?.toString() ?? (body.isEmpty ? 'request failed' : body);
+      throw EngineApiException(response.statusCode, msg);
+    }
+
+    final lines = response.stream
+        .transform(utf8.decoder)
+        .transform(const LineSplitter());
+    final dataBuffer = StringBuffer();
+    await for (final line in lines) {
+      if (line.isEmpty) {
+        if (dataBuffer.isEmpty) continue;
+        final payload = dataBuffer.toString();
+        dataBuffer.clear();
+        final decoded = jsonDecode(payload) as Map<String, dynamic>;
+        yield decoded;
+      } else if (line.startsWith('data: ')) {
+        if (dataBuffer.isNotEmpty) dataBuffer.write('\n');
+        dataBuffer.write(line.substring(6));
+      } else if (line.startsWith('data:')) {
+        if (dataBuffer.isNotEmpty) dataBuffer.write('\n');
+        dataBuffer.write(line.substring(5));
+      }
+      // `:`-prefixed comment lines are SSE keepalives — ignore.
+    }
+  }
+
+  RunEvent _parseRunEvent(Map<String, dynamic> e) {
+    final kind = e['event'] as String? ?? '';
+    switch (kind) {
+      case 'job_started':
+        return const RunJobStarted();
+      case 'started':
+        return RunStarted(
+          testName: e['test_name'] as String? ?? '',
+          totalSteps: (e['total_steps'] as num?)?.toInt() ?? 0,
+          viewports: (e['viewports'] as List? ?? const [])
+              .whereType<String>()
+              .toList(growable: false),
+        );
+      case 'step_started':
+        return RunStepStarted(
+          index: (e['index'] as num).toInt(),
+          kind: e['kind'] as String? ?? '',
+          viewport: e['viewport'] as String?,
+        );
+      case 'step_finished':
+        return RunStepFinished(
+          index: (e['index'] as num).toInt(),
+          kind: e['kind'] as String? ?? '',
+          viewport: e['viewport'] as String?,
+        );
+      case 'capture':
+        return RunCaptureEvent(RunCapture(
+          name: e['name'] as String,
+          stepIndex: (e['index'] as num).toInt(),
+          screenshotPath: e['screenshot_path'] as String,
+          viewport: e['viewport'] as String?,
+        ));
+      case 'console_error':
+        return RunConsoleErrorEvent(
+          message: RunConsoleMessage(
+            level: e['level'] as String? ?? 'log',
+            text: e['text'] as String? ?? '',
+          ),
+          viewport: e['viewport'] as String?,
+        );
+      case 'page_error':
+        return RunPageErrorEvent(
+          message: e['message'] as String? ?? '',
+          viewport: e['viewport'] as String?,
+        );
+      case 'failed_request':
+        return RunFailedRequestEvent(
+          request: RunFailedRequest(
+            url: e['url'] as String,
+            method: e['method'] as String? ?? 'GET',
+            failure: e['failure'] as String?,
+            status: (e['status'] as num?)?.toInt(),
+          ),
+          viewport: e['viewport'] as String?,
+        );
+      case 'finished':
+        return RunFinished(
+          RunResult.fromJson(e['result'] as Map<String, dynamic>),
+        );
+      case 'cancelled':
+        return const RunCancelled();
+      case 'error':
+        return RunErrored(e['message'] as String? ?? 'run job failed');
+      default:
+        return RunUnknownEvent(kind, e);
+    }
+  }
+
+  ScanEvent _parseScanEvent(Map<String, dynamic> e) {
+    final kind = e['event'] as String? ?? '';
+    switch (kind) {
+      case 'job_started':
+        return const ScanJobStarted();
+      case 'started':
+        return ScanStarted(
+          baseUrl: e['base_url'] as String? ?? '',
+          maxDepth: (e['max_depth'] as num?)?.toInt() ?? 0,
+          maxPages: (e['max_pages'] as num?)?.toInt() ?? 0,
+        );
+      case 'page_found':
+        return ScanPageFound(
+          url: e['url'] as String,
+          depth: (e['depth'] as num?)?.toInt() ?? 0,
+          title: e['title'] as String?,
+          error: e['error'] as String?,
+          ctaCount: (e['cta_count'] as num?)?.toInt() ?? 0,
+        );
+      case 'page_skipped':
+        return ScanPageSkipped(
+          url: e['url'] as String,
+          reason: e['reason'] as String? ?? '',
+        );
+      case 'finished':
+        final result = e['result'] as Map<String, dynamic>;
+        final siteMap = result['site_map'] as Map<String, dynamic>;
+        return ScanFinished(ScanResult.fromJson(siteMap));
+      case 'cancelled':
+        return const ScanCancelled();
+      case 'error':
+        return ScanErrored(e['message'] as String? ?? 'scan job failed');
+      default:
+        return ScanUnknownEvent(kind, e);
+    }
+  }
+
+  RunResult _runResultFromSnapshot(JobSnapshot snapshot) {
+    switch (snapshot.state) {
+      case 'finished':
+        final result = snapshot.result;
+        if (result == null) {
+          throw EngineApiException(0, 'run job finished without a result');
+        }
+        return RunResult.fromJson(result);
+      case 'cancelled':
+        throw EngineApiException(0, 'run job cancelled');
+      case 'error':
+        throw EngineApiException(500, snapshot.error ?? 'run job failed');
+      default:
+        throw EngineApiException(0, 'run job not finished (state=${snapshot.state})');
+    }
+  }
+
+  ScanResult _scanResultFromSnapshot(JobSnapshot snapshot) {
+    switch (snapshot.state) {
+      case 'finished':
+        final result = snapshot.result;
+        if (result == null) {
+          throw EngineApiException(0, 'scan job finished without a result');
+        }
+        final siteMap = result['site_map'] as Map<String, dynamic>;
+        return ScanResult.fromJson(siteMap);
+      case 'cancelled':
+        throw EngineApiException(0, 'scan job cancelled');
+      case 'error':
+        throw EngineApiException(500, snapshot.error ?? 'scan job failed');
+      default:
+        throw EngineApiException(0, 'scan job not finished (state=${snapshot.state})');
+    }
   }
 
   Future<Map<String, dynamic>> _get(String path) async {
