@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import os
 import sys
 
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from .baselines import apply_approval, plan_approval
@@ -219,7 +222,41 @@ def _resolve_baselines_arg(
     return None
 
 
+def _default_log_path() -> Path:
+    """Return the engine log file path for this platform."""
+    if sys.platform == "darwin":
+        base = Path.home() / "Library" / "Logs" / "fuzzmark"
+    else:
+        state = os.environ.get("XDG_STATE_HOME")
+        base = Path(state) / "fuzzmark" if state else Path.home() / ".local" / "state" / "fuzzmark"
+    return base / "engine.log"
+
+
+def _configure_serve_logging(log_path: Path) -> None:
+    """Send engine logs to `log_path` (rotated) + stderr at INFO."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    fmt = logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    file_h = RotatingFileHandler(
+        log_path, maxBytes=2_000_000, backupCount=3, encoding="utf-8"
+    )
+    file_h.setFormatter(fmt)
+    stderr_h = logging.StreamHandler(sys.stderr)
+    stderr_h.setFormatter(fmt)
+    root.handlers.clear()
+    root.addHandler(file_h)
+    root.addHandler(stderr_h)
+
+
 def _cmd_serve(args: argparse.Namespace) -> None:
+    log_path = Path(args.log_file) if args.log_file else _default_log_path()
+    _configure_serve_logging(log_path)
+    logging.getLogger(__name__).info("fuzzmark serve logging to %s", log_path)
+    print(f"fuzzmark serve logging to {log_path}", file=sys.stderr, flush=True)
     serve_forever(host=args.host, port=args.port)
 
 
@@ -824,6 +861,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     serve_p.add_argument(
         "--port", type=int, default=8765, help="Bind port (default 8765)"
+    )
+    serve_p.add_argument(
+        "--log-file",
+        default=None,
+        help="Engine log file path (default ~/Library/Logs/fuzzmark/engine.log on macOS, "
+        "~/.local/state/fuzzmark/engine.log otherwise)",
     )
     serve_p.set_defaults(func=_cmd_serve)
 

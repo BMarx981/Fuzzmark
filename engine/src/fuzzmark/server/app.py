@@ -44,6 +44,14 @@ class _Handler(BaseHTTPRequestHandler):
             body = dispatch(method, self.path, payload)
             self._respond(200, body)
         except RouteError as err:
+            if err.status >= 500:
+                log.exception(
+                    "RouteError(%s) in %s %s: %s",
+                    err.status,
+                    method,
+                    self.path,
+                    err.message,
+                )
             self._respond(err.status, {"error": err.message})
         except Exception as exc:  # noqa: BLE001
             log.exception("unhandled error in %s %s", method, self.path)

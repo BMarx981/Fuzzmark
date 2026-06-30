@@ -224,20 +224,11 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
       body: Column(
         children: [
           if (_error != null)
-            Container(
-              width: double.infinity,
-              color: c.dangerBg,
+            Padding(
               padding: const EdgeInsets.all(12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.error_outline, size: 16, color: c.dangerText),
-                  const SizedBox(width: FuzzSpace.sm),
-                  Expanded(
-                    child: Text(_error!,
-                        style: FuzzText.body.copyWith(color: c.dangerText)),
-                  ),
-                ],
+              child: FuzzErrorBanner(
+                message: _error!,
+                onDismiss: () => setState(() => _error = null),
               ),
             ),
           Expanded(

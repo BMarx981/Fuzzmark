@@ -259,28 +259,8 @@ class _ReportScreenState extends State<ReportScreen> {
   }
 }
 
-Widget _errorBanner(BuildContext context, String message) {
-  final c = context.fuzz;
-  return Container(
-    padding: const EdgeInsets.all(FuzzSpace.md),
-    decoration: BoxDecoration(
-      color: c.dangerBg,
-      borderRadius: const BorderRadius.all(FuzzSpace.controlRadius),
-      border: Border.all(color: c.border, width: 0.5),
-    ),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(Icons.error_outline, size: 16, color: c.dangerText),
-        const SizedBox(width: FuzzSpace.sm),
-        Expanded(
-          child: Text(message,
-              style: FuzzText.body.copyWith(color: c.dangerText)),
-        ),
-      ],
-    ),
-  );
-}
+Widget _errorBanner(BuildContext context, String message) =>
+    FuzzErrorBanner(message: message);
 
 ({Color bg, Color fg}) _verdictPalette(BuildContext context, String verdict) {
   final c = context.fuzz;

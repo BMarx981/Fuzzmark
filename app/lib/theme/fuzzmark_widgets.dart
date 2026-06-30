@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'fuzzmark_tokens.dart';
 
 enum RunStatus { running, passed, diffs, failed }
@@ -148,6 +149,75 @@ class FuzzTableRow extends StatelessWidget {
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class FuzzErrorBanner extends StatelessWidget {
+  final String message;
+  final VoidCallback? onDismiss;
+  final double maxHeight;
+
+  const FuzzErrorBanner({
+    super.key,
+    required this.message,
+    this.onDismiss,
+    this.maxHeight = 200,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.fuzz;
+    return Container(
+      padding: const EdgeInsets.all(FuzzSpace.md),
+      decoration: BoxDecoration(
+        color: c.dangerBg,
+        borderRadius: const BorderRadius.all(FuzzSpace.controlRadius),
+        border: Border.all(color: c.border, width: 0.5),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.error_outline, size: 16, color: c.dangerText),
+          const SizedBox(width: FuzzSpace.sm),
+          Expanded(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: maxHeight),
+              child: Scrollbar(
+                child: SingleChildScrollView(
+                  child: SelectableText(
+                    message,
+                    style: FuzzText.body.copyWith(color: c.dangerText),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: FuzzSpace.sm),
+          IconButton(
+            icon: Icon(Icons.copy, size: 16, color: c.dangerText),
+            tooltip: 'Copy error',
+            visualDensity: VisualDensity.compact,
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: message));
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Error copied to clipboard'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            },
+          ),
+          if (onDismiss != null)
+            IconButton(
+              icon: Icon(Icons.close, size: 16, color: c.dangerText),
+              tooltip: 'Dismiss',
+              visualDensity: VisualDensity.compact,
+              onPressed: onDismiss,
+            ),
+        ],
       ),
     );
   }
