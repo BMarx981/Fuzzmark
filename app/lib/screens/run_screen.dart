@@ -1,31 +1,31 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/client.dart';
+import '../state/providers.dart';
 import '../theme/fuzzmark_tokens.dart';
 import '../theme/fuzzmark_widgets.dart';
 import 'report_screen.dart';
 
-class RunScreen extends StatefulWidget {
+class RunScreen extends ConsumerStatefulWidget {
   const RunScreen({
     super.key,
-    required this.api,
     required this.project,
     required this.testPath,
     required this.onClose,
   });
 
-  final FuzzmarkApi api;
   final FuzzmarkProject project;
   final String testPath;
   final VoidCallback onClose;
 
   @override
-  State<RunScreen> createState() => _RunScreenState();
+  ConsumerState<RunScreen> createState() => _RunScreenState();
 }
 
-class _RunScreenState extends State<RunScreen> {
+class _RunScreenState extends ConsumerState<RunScreen> {
   bool _running = false;
   bool _headed = true;
   String? _error;
@@ -38,7 +38,7 @@ class _RunScreenState extends State<RunScreen> {
       _result = null;
     });
     try {
-      final result = await widget.api.runTest(
+      final result = await ref.read(apiProvider).runTest(
         projectPath: widget.project.path,
         testRelativePath: widget.testPath,
         headed: _headed,
@@ -65,7 +65,6 @@ class _RunScreenState extends State<RunScreen> {
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ReportScreen(
-          api: widget.api,
           project: widget.project,
           runResult: result,
           onClose: () => Navigator.of(context).pop(),

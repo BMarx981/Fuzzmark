@@ -1,28 +1,25 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/client.dart';
-import '../state/recents.dart';
+import '../state/providers.dart';
 import '../theme/fuzzmark_tokens.dart';
 import '../theme/fuzzmark_widgets.dart';
 
-class ProjectsScreen extends StatefulWidget {
+class ProjectsScreen extends ConsumerStatefulWidget {
   const ProjectsScreen({
     super.key,
-    required this.api,
-    required this.recents,
     required this.onOpen,
   });
 
-  final FuzzmarkApi api;
-  final RecentProjects recents;
   final void Function(FuzzmarkProject) onOpen;
 
   @override
-  State<ProjectsScreen> createState() => _ProjectsScreenState();
+  ConsumerState<ProjectsScreen> createState() => _ProjectsScreenState();
 }
 
-class _ProjectsScreenState extends State<ProjectsScreen> {
+class _ProjectsScreenState extends ConsumerState<ProjectsScreen> {
   bool _busy = false;
 
   Future<void> _withBusy(Future<void> Function() body) async {
@@ -47,8 +44,8 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
 
   Future<void> _load(String path) async {
     try {
-      final project = await widget.api.loadProject(path);
-      await widget.recents.add(project.path);
+      final project = await ref.read(apiProvider).loadProject(path);
+      await ref.read(recentsProvider).add(project.path);
       if (!mounted) return;
       widget.onOpen(project);
     } on EngineApiException catch (e) {
@@ -59,7 +56,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   }
 
   Future<void> _forget(String path) async {
-    await widget.recents.remove(path);
+    await ref.read(recentsProvider).remove(path);
     if (mounted) setState(() {});
   }
 
@@ -71,12 +68,12 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     if (draft == null) return;
     await _withBusy(() async {
       try {
-        final project = await widget.api.initProject(
-          path: draft.path,
-          name: draft.name,
-          baseUrl: draft.baseUrl,
-        );
-        await widget.recents.add(project.path);
+        final project = await ref.read(apiProvider).initProject(
+              path: draft.path,
+              name: draft.name,
+              baseUrl: draft.baseUrl,
+            );
+        await ref.read(recentsProvider).add(project.path);
         if (!mounted) return;
         widget.onOpen(project);
       } on EngineApiException catch (e) {
@@ -93,7 +90,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   @override
   Widget build(BuildContext context) {
     final c = context.fuzz;
-    final paths = widget.recents.paths;
+    final paths = ref.read(recentsProvider).paths;
     return Scaffold(
       backgroundColor: c.surface0,
       appBar: AppBar(

@@ -1,31 +1,31 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/client.dart';
+import '../state/providers.dart';
 import '../theme/fuzzmark_tokens.dart';
 import '../theme/fuzzmark_widgets.dart';
 
-class ScanScreen extends StatefulWidget {
+class ScanScreen extends ConsumerStatefulWidget {
   const ScanScreen({
     super.key,
-    required this.api,
     required this.project,
     required this.onClose,
     required this.onProjectUpdated,
     required this.onSwitchProject,
   });
 
-  final FuzzmarkApi api;
   final FuzzmarkProject project;
   final VoidCallback onClose;
   final ValueChanged<FuzzmarkProject> onProjectUpdated;
   final Future<void> Function(FuzzmarkProject) onSwitchProject;
 
   @override
-  State<ScanScreen> createState() => _ScanScreenState();
+  ConsumerState<ScanScreen> createState() => _ScanScreenState();
 }
 
-class _ScanScreenState extends State<ScanScreen> {
+class _ScanScreenState extends ConsumerState<ScanScreen> {
   final _maxDepth = TextEditingController(text: '3');
   final _maxPages = TextEditingController(text: '50');
   final _rateLimit = TextEditingController(text: '0.0');
@@ -92,7 +92,7 @@ class _ScanScreenState extends State<ScanScreen> {
     });
     try {
       if (url != _persistedBaseUrl) {
-        final updated = await widget.api.setBaseUrl(
+        final updated = await ref.read(apiProvider).setBaseUrl(
           projectPath: widget.project.path,
           baseUrl: url,
         );
@@ -100,7 +100,7 @@ class _ScanScreenState extends State<ScanScreen> {
         widget.onProjectUpdated(updated);
         setState(() => _persistedBaseUrl = updated.baseUrl);
       }
-      final result = await widget.api.runScan(
+      final result = await ref.read(apiProvider).runScan(
         projectPath: widget.project.path,
         bounds: bounds,
       );
@@ -130,7 +130,7 @@ class _ScanScreenState extends State<ScanScreen> {
     setState(() => _saving = true);
     final filtered = _filteredSiteMap(result, _selected);
     try {
-      final updated = await widget.api.saveScan(
+      final updated = await ref.read(apiProvider).saveScan(
         projectPath: widget.project.path,
         siteMap: filtered,
       );
@@ -164,7 +164,7 @@ class _ScanScreenState extends State<ScanScreen> {
       _error = null;
     });
     try {
-      final created = await widget.api.initProject(
+      final created = await ref.read(apiProvider).initProject(
         path: draft.path,
         name: draft.name,
         baseUrl: draft.baseUrl,

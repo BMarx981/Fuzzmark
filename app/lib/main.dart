@@ -1,52 +1,40 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'api/client.dart';
-import 'engine/engine_process.dart';
 import 'screens/project_screen.dart';
 import 'screens/projects_screen.dart';
+import 'state/providers.dart';
 import 'state/recents.dart';
 import 'theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final recents = await RecentProjects.load();
-  runApp(FuzzmarkApp(recents: recents));
+  runApp(
+    ProviderScope(
+      overrides: [recentsProvider.overrideWithValue(recents)],
+      child: const FuzzmarkApp(),
+    ),
+  );
 }
 
-class FuzzmarkApp extends StatefulWidget {
-  const FuzzmarkApp({super.key, required this.recents});
-
-  final RecentProjects recents;
+class FuzzmarkApp extends ConsumerStatefulWidget {
+  const FuzzmarkApp({super.key});
 
   @override
-  State<FuzzmarkApp> createState() => _FuzzmarkAppState();
+  ConsumerState<FuzzmarkApp> createState() => _FuzzmarkAppState();
 }
 
-class _FuzzmarkAppState extends State<FuzzmarkApp> {
-  final _engine = EngineProcess();
-  final _api = FuzzmarkApi();
+class _FuzzmarkAppState extends ConsumerState<FuzzmarkApp> {
   FuzzmarkProject? _open;
-  late Future<void> _bootFuture;
-
-  @override
-  void initState() {
-    super.initState();
-    _bootFuture = _engine.start();
-  }
-
-  @override
-  void dispose() {
-    _api.close();
-    _engine.stop();
-    super.dispose();
-  }
 
   void _openProject(FuzzmarkProject project) {
     setState(() => _open = project);
   }
 
   Future<void> _switchProject(FuzzmarkProject project) async {
-    await widget.recents.add(project.path);
+    await ref.read(recentsProvider).add(project.path);
     if (!mounted) return;
     setState(() => _open = project);
   }
@@ -57,38 +45,27 @@ class _FuzzmarkAppState extends State<FuzzmarkApp> {
 
   @override
   Widget build(BuildContext context) {
+    final boot = ref.watch(engineBootProvider);
     return MaterialApp(
       title: 'Fuzzmark',
       theme: buildLightTheme(),
       darkTheme: buildDarkTheme(),
       themeMode: ThemeMode.system,
-      home: FutureBuilder<void>(
-        future: _bootFuture,
-        builder: (context, snap) {
-          if (snap.connectionState != ConnectionState.done) {
-            return const _BootScreen(message: 'Starting fuzzmark engine…');
-          }
-          if (snap.hasError) {
-            return _BootScreen(
-              message: 'Engine failed to start',
-              error: snap.error.toString(),
-              onRetry: () =>
-                  setState(() => _bootFuture = _engine.start()),
-            );
-          }
-          return _open == null
-              ? ProjectsScreen(
-                  api: _api,
-                  recents: widget.recents,
-                  onOpen: _openProject,
-                )
-              : ProjectScreen(
-                  api: _api,
-                  project: _open!,
-                  onClose: _closeProject,
-                  onSwitchProject: _switchProject,
-                );
-        },
+      home: boot.when(
+        loading: () =>
+            const _BootScreen(message: 'Starting fuzzmark engine…'),
+        error: (err, _) => _BootScreen(
+          message: 'Engine failed to start',
+          error: err.toString(),
+          onRetry: () => ref.invalidate(engineBootProvider),
+        ),
+        data: (_) => _open == null
+            ? ProjectsScreen(onOpen: _openProject)
+            : ProjectScreen(
+                project: _open!,
+                onClose: _closeProject,
+                onSwitchProject: _switchProject,
+              ),
       ),
     );
   }

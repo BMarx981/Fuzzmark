@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/client.dart';
 import '../theme/fuzzmark_tokens.dart';
@@ -7,32 +8,29 @@ import 'run_screen.dart';
 import 'scan_screen.dart';
 import 'test_builder_screen.dart';
 
-class ProjectScreen extends StatefulWidget {
+class ProjectScreen extends ConsumerStatefulWidget {
   const ProjectScreen({
     super.key,
-    required this.api,
     required this.project,
     required this.onClose,
     required this.onSwitchProject,
   });
 
-  final FuzzmarkApi api;
   final FuzzmarkProject project;
   final VoidCallback onClose;
   final Future<void> Function(FuzzmarkProject) onSwitchProject;
 
   @override
-  State<ProjectScreen> createState() => _ProjectScreenState();
+  ConsumerState<ProjectScreen> createState() => _ProjectScreenState();
 }
 
-class _ProjectScreenState extends State<ProjectScreen> {
+class _ProjectScreenState extends ConsumerState<ProjectScreen> {
   late FuzzmarkProject _project = widget.project;
 
   Future<void> _openScan() async {
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ScanScreen(
-          api: widget.api,
           project: _project,
           onClose: () => Navigator.of(context).pop(),
           onProjectUpdated: (p) => setState(() => _project = p),
@@ -46,7 +44,6 @@ class _ProjectScreenState extends State<ProjectScreen> {
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => TestBuilderScreen(
-          api: widget.api,
           project: _project,
           onClose: () => Navigator.of(context).pop(),
           onProjectUpdated: (p) => setState(() => _project = p),
@@ -59,7 +56,6 @@ class _ProjectScreenState extends State<ProjectScreen> {
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => RunScreen(
-          api: widget.api,
           project: _project,
           testPath: testPath,
           onClose: () => Navigator.of(context).pop(),

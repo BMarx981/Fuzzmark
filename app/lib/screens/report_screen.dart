@@ -1,8 +1,10 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/client.dart';
+import '../state/providers.dart';
 import '../theme/fuzzmark_tokens.dart';
 import '../theme/fuzzmark_widgets.dart';
 import 'diff_viewer.dart';
@@ -16,25 +18,23 @@ const _verdictOrder = {
   'pass': 5,
 };
 
-class ReportScreen extends StatefulWidget {
+class ReportScreen extends ConsumerStatefulWidget {
   const ReportScreen({
     super.key,
-    required this.api,
     required this.project,
     required this.runResult,
     required this.onClose,
   });
 
-  final FuzzmarkApi api;
   final FuzzmarkProject project;
   final RunResult runResult;
   final VoidCallback onClose;
 
   @override
-  State<ReportScreen> createState() => _ReportScreenState();
+  ConsumerState<ReportScreen> createState() => _ReportScreenState();
 }
 
-class _ReportScreenState extends State<ReportScreen> {
+class _ReportScreenState extends ConsumerState<ReportScreen> {
   bool _loading = true;
   bool _approving = false;
   String? _error;
@@ -54,7 +54,7 @@ class _ReportScreenState extends State<ReportScreen> {
       _error = null;
     });
     try {
-      final report = await widget.api.reportTest(
+      final report = await ref.read(apiProvider).reportTest(
         projectPath: widget.project.path,
         result: widget.runResult.raw,
       );
@@ -81,7 +81,7 @@ class _ReportScreenState extends State<ReportScreen> {
     if (report == null || _selected.isEmpty) return;
     setState(() => _approving = true);
     try {
-      final res = await widget.api.approveBaselines(
+      final res = await ref.read(apiProvider).approveBaselines(
         projectPath: widget.project.path,
         result: widget.runResult.raw,
         captureNames: _selected.toList(growable: false),

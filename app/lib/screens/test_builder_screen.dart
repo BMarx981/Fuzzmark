@@ -1,28 +1,28 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/client.dart';
+import '../state/providers.dart';
 import '../theme/fuzzmark_tokens.dart';
 import '../theme/fuzzmark_widgets.dart';
 
-class TestBuilderScreen extends StatefulWidget {
+class TestBuilderScreen extends ConsumerStatefulWidget {
   const TestBuilderScreen({
     super.key,
-    required this.api,
     required this.project,
     required this.onClose,
     required this.onProjectUpdated,
   });
 
-  final FuzzmarkApi api;
   final FuzzmarkProject project;
   final VoidCallback onClose;
   final ValueChanged<FuzzmarkProject> onProjectUpdated;
 
   @override
-  State<TestBuilderScreen> createState() => _TestBuilderScreenState();
+  ConsumerState<TestBuilderScreen> createState() => _TestBuilderScreenState();
 }
 
-class _TestBuilderScreenState extends State<TestBuilderScreen> {
+class _TestBuilderScreenState extends ConsumerState<TestBuilderScreen> {
   List<ScannedPage>? _pages;
   ScannedPage? _selectedPage;
   bool _loadingPages = false;
@@ -57,7 +57,7 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
       _error = null;
     });
     try {
-      final pages = await widget.api.listScannedPages(widget.project.path);
+      final pages = await ref.read(apiProvider).listScannedPages(widget.project.path);
       if (!mounted) return;
       setState(() => _pages = pages);
     } on EngineApiException catch (e) {
@@ -84,19 +84,19 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
       _values.clear();
     });
     try {
-      final fields = await widget.api.extractFields(
+      final fields = await ref.read(apiProvider).extractFields(
         projectPath: widget.project.path,
         url: page.url,
       );
       final suggestions = fields.isEmpty
           ? <String, List<FieldSuggestion>>{}
-          : await widget.api.suggestFields(
+          : await ref.read(apiProvider).suggestFields(
               projectPath: widget.project.path,
               fields: fields,
             );
       final ctas = page.ctas.isNotEmpty
           ? page.ctas
-          : await widget.api.extractCtas(
+          : await ref.read(apiProvider).extractCtas(
               projectPath: widget.project.path,
               url: page.url,
             );
@@ -146,7 +146,7 @@ class _TestBuilderScreenState extends State<TestBuilderScreen> {
     };
     setState(() => _saving = true);
     try {
-      final updated = await widget.api.saveTest(
+      final updated = await ref.read(apiProvider).saveTest(
         projectPath: widget.project.path,
         test: test,
         filename: draft.filename.isEmpty ? null : draft.filename,
