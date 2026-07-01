@@ -85,6 +85,20 @@ class RunController extends StateNotifier<RunState> {
   final RunJobKey _key;
   StreamSubscription<RunEvent>? _sub;
 
+  static const _flushWindow = Duration(milliseconds: 50);
+  Timer? _flushTimer;
+  final List<RunCapture> _bufCaptures = [];
+  final List<RunConsoleMessage> _bufConsole = [];
+  final List<String> _bufPage = [];
+  final List<RunFailedRequest> _bufFailed = [];
+  int _bufStepsDone = 0;
+  String? _bufTestName;
+  int? _bufTotalSteps;
+  List<String>? _bufViewports;
+  RunPhase? _bufTerminalPhase;
+  RunResult? _bufResult;
+  String? _bufErrorMessage;
+
   Future<void> start({bool headed = false, int? slowMoMs}) async {
     if (state.isBusy) return;
     await _sub?.cancel();
@@ -127,55 +141,123 @@ class RunController extends StateNotifier<RunState> {
   void reset() {
     _sub?.cancel();
     _sub = null;
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    _clearBuffers();
     state = const RunState();
   }
 
   void _onEvent(RunEvent event) {
+    final terminal = _bufferEvent(event);
+    if (terminal) {
+      _flushTimer?.cancel();
+      _flushTimer = null;
+      _flush();
+    } else {
+      _flushTimer ??= Timer(_flushWindow, _flush);
+    }
+  }
+
+  bool _bufferEvent(RunEvent event) {
     switch (event) {
       case RunJobStarted():
-        break;
+        return false;
       case RunStarted(
           :final testName,
           :final totalSteps,
           :final viewports,
         ):
-        state = state.copyWith(
-          testName: testName,
-          totalSteps: totalSteps,
-          viewports: viewports,
-        );
+        _bufTestName = testName;
+        _bufTotalSteps = totalSteps;
+        _bufViewports = viewports;
+        return false;
       case RunStepStarted():
-        break;
+        return false;
       case RunStepFinished():
-        state = state.copyWith(stepsDone: state.stepsDone + 1);
+        _bufStepsDone += 1;
+        return false;
       case RunCaptureEvent(:final capture):
-        state = state.copyWith(captures: [...state.captures, capture]);
+        _bufCaptures.add(capture);
+        return false;
       case RunConsoleErrorEvent(:final message):
-        state = state.copyWith(
-          consoleErrors: [...state.consoleErrors, message],
-        );
+        _bufConsole.add(message);
+        return false;
       case RunPageErrorEvent(:final message):
-        state = state.copyWith(pageErrors: [...state.pageErrors, message]);
+        _bufPage.add(message);
+        return false;
       case RunFailedRequestEvent(:final request):
-        state = state.copyWith(
-          failedRequests: [...state.failedRequests, request],
-        );
+        _bufFailed.add(request);
+        return false;
       case RunFinished(:final result):
-        state = state.copyWith(phase: RunPhase.finished, result: result);
+        _bufTerminalPhase = RunPhase.finished;
+        _bufResult = result;
+        return true;
       case RunCancelled():
-        state = state.copyWith(phase: RunPhase.cancelled);
+        _bufTerminalPhase = RunPhase.cancelled;
+        return true;
       case RunErrored(:final message):
-        state = state.copyWith(
-          phase: RunPhase.error,
-          errorMessage: message,
-        );
+        _bufTerminalPhase = RunPhase.error;
+        _bufErrorMessage = message;
+        return true;
       case RunUnknownEvent():
-        break;
+        return false;
     }
+  }
+
+  void _flush() {
+    _flushTimer = null;
+    if (_bufCaptures.isEmpty &&
+        _bufConsole.isEmpty &&
+        _bufPage.isEmpty &&
+        _bufFailed.isEmpty &&
+        _bufStepsDone == 0 &&
+        _bufTestName == null &&
+        _bufTerminalPhase == null) {
+      return;
+    }
+    state = state.copyWith(
+      phase: _bufTerminalPhase,
+      testName: _bufTestName,
+      totalSteps: _bufTotalSteps,
+      viewports: _bufViewports,
+      stepsDone:
+          _bufStepsDone == 0 ? null : state.stepsDone + _bufStepsDone,
+      captures: _bufCaptures.isEmpty
+          ? null
+          : [...state.captures, ..._bufCaptures],
+      consoleErrors: _bufConsole.isEmpty
+          ? null
+          : [...state.consoleErrors, ..._bufConsole],
+      pageErrors:
+          _bufPage.isEmpty ? null : [...state.pageErrors, ..._bufPage],
+      failedRequests: _bufFailed.isEmpty
+          ? null
+          : [...state.failedRequests, ..._bufFailed],
+      result: _bufResult,
+      errorMessage: _bufErrorMessage,
+    );
+    _clearBuffers();
+  }
+
+  void _clearBuffers() {
+    _bufCaptures.clear();
+    _bufConsole.clear();
+    _bufPage.clear();
+    _bufFailed.clear();
+    _bufStepsDone = 0;
+    _bufTestName = null;
+    _bufTotalSteps = null;
+    _bufViewports = null;
+    _bufTerminalPhase = null;
+    _bufResult = null;
+    _bufErrorMessage = null;
   }
 
   void _onStreamError(Object exc, StackTrace _) {
     if (state.isTerminal) return;
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    _clearBuffers();
     state = state.copyWith(
       phase: RunPhase.error,
       errorMessage: exc.toString(),
@@ -185,6 +267,9 @@ class RunController extends StateNotifier<RunState> {
   void _onStreamDone() {
     _sub = null;
     if (state.isTerminal) return;
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    _clearBuffers();
     state = state.copyWith(
       phase: RunPhase.error,
       errorMessage: 'run job stream closed before a terminal event',
@@ -193,6 +278,7 @@ class RunController extends StateNotifier<RunState> {
 
   @override
   void dispose() {
+    _flushTimer?.cancel();
     _sub?.cancel();
     super.dispose();
   }

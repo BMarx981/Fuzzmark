@@ -390,23 +390,17 @@ class _CaptureTile extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 8),
-          if (file.existsSync())
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: Image.file(
-                file,
-                fit: BoxFit.fitWidth,
-                errorBuilder: (_, _, _) => Text(
-                  'Failed to render screenshot',
-                  style: FuzzText.body.copyWith(color: c.dangerText),
-                ),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: Image.file(
+              file,
+              fit: BoxFit.fitWidth,
+              errorBuilder: (_, _, _) => Text(
+                'Screenshot not available',
+                style: FuzzText.body.copyWith(color: c.dangerText),
               ),
-            )
-          else
-            Text(
-              'screenshot not found on disk',
-              style: FuzzText.body.copyWith(color: c.dangerText),
             ),
+          ),
         ],
       ),
     );
