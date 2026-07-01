@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .baselines import apply_approval, plan_approval
 from .capture import capture_page
+from .check import check_test
 from .compare import DEFAULT_THRESHOLD, MaskRegion, compare_images, parse_mask_spec
 from .driver import load_test, run_flow
 from .extractor import extract_ctas, extract_fields, extract_site
@@ -150,6 +151,29 @@ def _cmd_run(args: argparse.Namespace) -> None:
     )
     json.dump(result.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
+
+
+def _cmd_check(args: argparse.Namespace) -> None:
+    project = _load_project_arg(args)
+    test = load_test(args.test)
+    session = _resolve_session_arg(args, project)
+    masks = _parse_named_masks(args.mask or [])
+    baselines = _resolve_baselines_arg(args.baselines, project)
+    report_dir = Path(args.report_out) if args.report_out else Path(args.out) / "report"
+    check = check_test(
+        test,
+        args.out,
+        report_dir=report_dir,
+        baselines_dir=baselines,
+        threshold=args.threshold,
+        masks=masks or None,
+        viewport=_resolve_viewport(args, project),
+        headless=not args.headed,
+        session=session,
+    )
+    json.dump(check.report.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
+    sys.stdout.write("\n")
+    sys.exit(0 if check.passed else 1)
 
 
 def _resolve_session_arg(
@@ -690,6 +714,61 @@ def main(argv: list[str] | None = None) -> None:
     )
     _add_project_arg(run_p)
     run_p.set_defaults(func=_cmd_run)
+
+    check_p = sub.add_parser(
+        "check",
+        help="Run a Test, render its report, exit non-zero on any non-pass verdict",
+    )
+    check_p.add_argument("test", help="Path to a Test JSON file")
+    check_p.add_argument(
+        "--out", required=True, help="Directory to write screenshots into"
+    )
+    check_p.add_argument(
+        "--report-out",
+        default=None,
+        metavar="DIR",
+        help="Directory to write the HTML report into (default <out>/report)",
+    )
+    check_p.add_argument(
+        "--baselines",
+        default=None,
+        metavar="DIR",
+        help="Approved-baselines directory; captures with no baseline fail the gate",
+    )
+    check_p.add_argument(
+        "--threshold",
+        type=float,
+        default=DEFAULT_THRESHOLD,
+        help=f"SSIM threshold (default {DEFAULT_THRESHOLD})",
+    )
+    check_p.add_argument(
+        "--mask",
+        action="append",
+        default=[],
+        metavar="CAPTURE:x,y,w,h[,source]",
+        help="Region to blank on both images before scoring; repeatable",
+    )
+    check_p.add_argument(
+        "--width",
+        type=int,
+        default=None,
+        help=f"Viewport width (px); falls back to --project's first viewport, then {DEFAULT_VIEWPORT[0]}",
+    )
+    check_p.add_argument(
+        "--height",
+        type=int,
+        default=None,
+        help=f"Viewport height (px); falls back to --project's first viewport, then {DEFAULT_VIEWPORT[1]}",
+    )
+    check_p.add_argument("--headed", action="store_true", help="Run the browser headed")
+    check_p.add_argument(
+        "--session",
+        default=None,
+        metavar="PATH",
+        help="Replay a Playwright storage_state JSON for an authenticated run (Test JSON 'session' wins when set)",
+    )
+    _add_project_arg(check_p)
+    check_p.set_defaults(func=_cmd_check)
 
     report_p = sub.add_parser(
         "report",
