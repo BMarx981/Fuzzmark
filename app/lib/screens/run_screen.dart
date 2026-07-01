@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/client.dart';
-import '../state/providers.dart';
+import '../state/run_controller.dart';
 import '../theme/fuzzmark_tokens.dart';
 import '../theme/fuzzmark_widgets.dart';
 import 'report_screen.dart';
@@ -26,41 +26,21 @@ class RunScreen extends ConsumerStatefulWidget {
 }
 
 class _RunScreenState extends ConsumerState<RunScreen> {
-  bool _running = false;
   bool _headed = true;
-  String? _error;
-  RunResult? _result;
 
-  Future<void> _run() async {
-    setState(() {
-      _running = true;
-      _error = null;
-      _result = null;
-    });
-    try {
-      final result = await ref.read(apiProvider).runTest(
+  RunJobKey get _key => (
         projectPath: widget.project.path,
         testRelativePath: widget.testPath,
-        headed: _headed,
       );
-      if (!mounted) return;
-      setState(() => _result = result);
-    } on EngineApiException catch (e) {
-      _setError(e.message);
-    } catch (e) {
-      _setError(e.toString());
-    } finally {
-      if (mounted) setState(() => _running = false);
-    }
-  }
 
-  void _setError(String message) {
-    if (!mounted) return;
-    setState(() => _error = message);
-  }
+  Future<void> _run() =>
+      ref.read(runControllerProvider(_key).notifier).start(headed: _headed);
+
+  Future<void> _cancel() =>
+      ref.read(runControllerProvider(_key).notifier).cancel();
 
   Future<void> _openReport() async {
-    final result = _result;
+    final result = ref.read(runControllerProvider(_key)).result;
     if (result == null) return;
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -76,6 +56,9 @@ class _RunScreenState extends ConsumerState<RunScreen> {
   @override
   Widget build(BuildContext context) {
     final c = context.fuzz;
+    final state = ref.watch(runControllerProvider(_key));
+    final busy = state.isBusy;
+    final result = state.result;
     return Scaffold(
       backgroundColor: c.surface0,
       appBar: AppBar(
@@ -86,18 +69,19 @@ class _RunScreenState extends ConsumerState<RunScreen> {
         shape: Border(bottom: BorderSide(color: c.border, width: 0.5)),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: _running ? null : widget.onClose,
+          onPressed: busy ? null : widget.onClose,
         ),
         title: Text('Run — ${widget.testPath}',
             style: FuzzText.title.copyWith(color: c.textPrimary)),
         actions: [
-          if (_running)
+          if (busy)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: SizedBox(
                 width: 18,
                 height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2, color: c.accentFill),
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: c.accentFill),
               ),
             ),
         ],
@@ -154,40 +138,51 @@ class _RunScreenState extends ConsumerState<RunScreen> {
                         ),
                         Switch(
                           value: _headed,
-                          onChanged: _running
-                              ? null
-                              : (v) => setState(() => _headed = v),
+                          onChanged:
+                              busy ? null : (v) => setState(() => _headed = v),
                         ),
                         const SizedBox(width: 12),
-                        if (_result != null)
+                        if (busy)
                           OutlinedButton.icon(
-                            onPressed: _running ? null : _openReport,
+                            onPressed: state.handle == null ? null : _cancel,
+                            icon: const Icon(Icons.stop_circle_outlined),
+                            label: const Text('Cancel'),
+                          ),
+                        if (!busy && result != null) ...[
+                          OutlinedButton.icon(
+                            onPressed: _openReport,
                             icon: const Icon(Icons.assessment_outlined),
                             label: const Text('View report'),
                           ),
-                        if (_result != null) const SizedBox(width: 8),
-                        FilledButton.icon(
-                          onPressed: _running ? null : _run,
-                          icon: const Icon(Icons.play_arrow),
-                          label: Text(_result == null ? 'Run test' : 'Re-run'),
-                        ),
+                          const SizedBox(width: 8),
+                        ],
+                        if (!busy)
+                          FilledButton.icon(
+                            onPressed: _run,
+                            icon: const Icon(Icons.play_arrow),
+                            label: Text(
+                                result == null ? 'Run test' : 'Re-run'),
+                          ),
                       ],
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
-                if (_running)
-                  LinearProgressIndicator(
-                    minHeight: 4,
-                    backgroundColor: c.surface1,
-                    valueColor: AlwaysStoppedAnimation(c.accentFill),
-                  ),
-                if (_error != null) ...[
+                if (busy) _progressBar(context, state),
+                if (state.errorMessage != null) ...[
                   const SizedBox(height: FuzzSpace.sm),
-                  _errorBanner(context, _error!),
+                  FuzzErrorBanner(message: state.errorMessage!),
+                ],
+                if (state.phase == RunPhase.cancelled) ...[
+                  const SizedBox(height: FuzzSpace.sm),
+                  _statusBanner(
+                    context,
+                    icon: Icons.stop_circle_outlined,
+                    text: 'Run cancelled',
+                  ),
                 ],
                 const SizedBox(height: 12),
-                Expanded(child: _resultBody(context)),
+                Expanded(child: _resultBody(context, state)),
               ],
             ),
           ),
@@ -196,41 +191,94 @@ class _RunScreenState extends ConsumerState<RunScreen> {
     );
   }
 
-  Widget _resultBody(BuildContext context) {
-    if (_running && _result == null) {
-      return const FuzzStateCard(
-        kind: FuzzStateKind.loading,
-        title: 'Driving the browser…',
-        message: 'Running the test flow against the page.',
-      );
-    }
-    final result = _result;
-    if (result == null) {
+  Widget _progressBar(BuildContext context, RunState state) {
+    final c = context.fuzz;
+    final total = state.totalSteps;
+    final done = state.stepsDone;
+    final progress = total > 0 ? done / total : null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        LinearProgressIndicator(
+          value: progress,
+          minHeight: 4,
+          backgroundColor: c.surface1,
+          valueColor: AlwaysStoppedAnimation(c.accentFill),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          total > 0
+              ? 'Step $done/$total'
+              : (state.phase == RunPhase.starting
+                  ? 'Starting run…'
+                  : 'Running…'),
+          style: FuzzText.caption.copyWith(color: c.textMuted),
+        ),
+      ],
+    );
+  }
+
+  Widget _resultBody(BuildContext context, RunState state) {
+    if (state.phase == RunPhase.idle) {
       return FuzzStateCard(
         kind: FuzzStateKind.empty,
         title: 'No run yet',
-        message: 'Press “Run test” to execute the flow and capture screenshots.',
+        message:
+            'Press “Run test” to execute the flow and capture screenshots.',
         actionLabel: 'Run test',
         actionIcon: Icons.play_arrow,
         onAction: _run,
       );
     }
-    return _ResultView(result: result);
+    if (state.isBusy && state.captures.isEmpty) {
+      return FuzzStateCard(
+        kind: FuzzStateKind.loading,
+        title: state.phase == RunPhase.starting
+            ? 'Starting fuzzmark engine job…'
+            : 'Driving the browser…',
+        message: 'Running the test flow against the page.',
+      );
+    }
+    return _LiveResultView(state: state);
   }
 }
 
-Widget _errorBanner(BuildContext context, String message) =>
-    FuzzErrorBanner(message: message);
+Widget _statusBanner(BuildContext context,
+    {required IconData icon, required String text}) {
+  final c = context.fuzz;
+  return Container(
+    padding: const EdgeInsets.symmetric(
+        horizontal: FuzzSpace.md, vertical: FuzzSpace.sm),
+    decoration: BoxDecoration(
+      color: c.surface2,
+      borderRadius: const BorderRadius.all(FuzzSpace.controlRadius),
+      border: Border.all(color: c.border, width: 0.5),
+    ),
+    child: Row(
+      children: [
+        Icon(icon, size: 18, color: c.textSecondary),
+        const SizedBox(width: 8),
+        Text(text, style: FuzzText.body.copyWith(color: c.textPrimary)),
+      ],
+    ),
+  );
+}
 
-class _ResultView extends StatelessWidget {
-  const _ResultView({required this.result});
+class _LiveResultView extends StatelessWidget {
+  const _LiveResultView({required this.state});
 
-  final RunResult result;
+  final RunState state;
+
+  bool get _hasErrors =>
+      state.consoleErrors.isNotEmpty ||
+      state.pageErrors.isNotEmpty ||
+      state.failedRequests.isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
     final c = context.fuzz;
-    final captures = result.captures;
+    final captures = state.captures;
+    final result = state.result;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -239,21 +287,22 @@ class _ResultView extends StatelessWidget {
             Text('${captures.length} captures',
                 style: FuzzText.body.copyWith(color: c.textPrimary)),
             const SizedBox(width: 16),
-            if (result.hasErrors)
-              _pill(context, _errorSummary(result),
+            if (_hasErrors)
+              _pill(context, _errorSummary(),
                   bg: c.dangerBg, fg: c.dangerText)
-            else
+            else if (state.isTerminal)
               _pill(context, 'no errors collected',
                   bg: c.surface1, fg: c.textMuted),
             const Spacer(),
-            Flexible(
-              child: Text(
-                result.runDir,
-                style: FuzzText.mono.copyWith(color: c.textMuted),
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.right,
+            if (result != null)
+              Flexible(
+                child: Text(
+                  result.runDir,
+                  style: FuzzText.mono.copyWith(color: c.textMuted),
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.right,
+                ),
               ),
-            ),
           ],
         ),
         const SizedBox(height: FuzzSpace.md),
@@ -261,9 +310,9 @@ class _ResultView extends StatelessWidget {
           child: ListView(
             children: [
               for (final cap in captures) _CaptureTile(capture: cap),
-              if (result.hasErrors) ...[
+              if (_hasErrors) ...[
                 const SizedBox(height: 8),
-                _ErrorsPanel(result: result),
+                _ErrorsPanel(state: state),
               ],
             ],
           ),
@@ -272,14 +321,16 @@ class _ResultView extends StatelessWidget {
     );
   }
 
-  String _errorSummary(RunResult r) {
+  String _errorSummary() {
     final parts = <String>[];
-    if (r.consoleErrors.isNotEmpty) {
-      parts.add('${r.consoleErrors.length} console');
+    if (state.consoleErrors.isNotEmpty) {
+      parts.add('${state.consoleErrors.length} console');
     }
-    if (r.pageErrors.isNotEmpty) parts.add('${r.pageErrors.length} page');
-    if (r.failedRequests.isNotEmpty) {
-      parts.add('${r.failedRequests.length} request');
+    if (state.pageErrors.isNotEmpty) {
+      parts.add('${state.pageErrors.length} page');
+    }
+    if (state.failedRequests.isNotEmpty) {
+      parts.add('${state.failedRequests.length} request');
     }
     return parts.join(' · ');
   }
@@ -363,9 +414,9 @@ class _CaptureTile extends StatelessWidget {
 }
 
 class _ErrorsPanel extends StatelessWidget {
-  const _ErrorsPanel({required this.result});
+  const _ErrorsPanel({required this.state});
 
-  final RunResult result;
+  final RunState state;
 
   @override
   Widget build(BuildContext context) {
@@ -383,10 +434,10 @@ class _ErrorsPanel extends StatelessWidget {
           Text('Collected errors',
               style: FuzzText.heading.copyWith(color: c.textPrimary)),
           const SizedBox(height: FuzzSpace.sm),
-          if (result.consoleErrors.isNotEmpty) ...[
+          if (state.consoleErrors.isNotEmpty) ...[
             Text('Console',
                 style: FuzzText.label.copyWith(color: c.textMuted)),
-            for (final m in result.consoleErrors)
+            for (final m in state.consoleErrors)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 2),
                 child: Text('[${m.level}] ${m.text}',
@@ -394,10 +445,10 @@ class _ErrorsPanel extends StatelessWidget {
               ),
             const SizedBox(height: 8),
           ],
-          if (result.pageErrors.isNotEmpty) ...[
+          if (state.pageErrors.isNotEmpty) ...[
             Text('Page errors',
                 style: FuzzText.label.copyWith(color: c.textMuted)),
-            for (final e in result.pageErrors)
+            for (final e in state.pageErrors)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 2),
                 child: Text(e,
@@ -405,10 +456,10 @@ class _ErrorsPanel extends StatelessWidget {
               ),
             const SizedBox(height: 8),
           ],
-          if (result.failedRequests.isNotEmpty) ...[
+          if (state.failedRequests.isNotEmpty) ...[
             Text('Failed requests',
                 style: FuzzText.label.copyWith(color: c.textMuted)),
-            for (final r in result.failedRequests)
+            for (final r in state.failedRequests)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 2),
                 child: Text(
