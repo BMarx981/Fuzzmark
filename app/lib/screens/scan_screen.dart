@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../api/client.dart';
 import '../state/providers.dart';
+import '../state/scan_controller.dart';
 import '../theme/fuzzmark_tokens.dart';
 import '../theme/fuzzmark_widgets.dart';
 
@@ -36,11 +37,14 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
   bool _allowCrossOrigin = false;
   bool _showBounds = false;
 
-  bool _scanning = false;
   bool _saving = false;
-  String? _error;
-  ScanResult? _result;
+  String? _localError;
   final Set<String> _selected = <String>{};
+
+  String get _projectPath => widget.project.path;
+
+  ScanController get _controller =>
+      ref.read(scanControllerProvider(_projectPath).notifier);
 
   @override
   void dispose() {
@@ -85,64 +89,58 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
       return;
     }
     setState(() {
-      _scanning = true;
-      _error = null;
-      _result = null;
+      _localError = null;
       _selected.clear();
     });
     try {
       if (url != _persistedBaseUrl) {
         final updated = await ref.read(apiProvider).setBaseUrl(
-          projectPath: widget.project.path,
-          baseUrl: url,
-        );
+              projectPath: widget.project.path,
+              baseUrl: url,
+            );
         if (!mounted) return;
         widget.onProjectUpdated(updated);
         setState(() => _persistedBaseUrl = updated.baseUrl);
       }
-      final result = await ref.read(apiProvider).runScan(
-        projectPath: widget.project.path,
-        bounds: bounds,
-      );
-      if (!mounted) return;
-      setState(() {
-        _result = result;
-        _selected
-          ..clear()
-          ..addAll(result.pages.where((p) => p.error == null).map((p) => p.url));
-      });
     } on EngineApiException catch (e) {
-      _setError(e.message);
+      _setLocalError(e.message);
+      return;
     } catch (e) {
-      _setError(e.toString());
-    } finally {
-      if (mounted) setState(() => _scanning = false);
+      _setLocalError(e.toString());
+      return;
     }
+    _controller.reset();
+    await _controller.start(bounds);
   }
 
+  Future<void> _cancelScan() => _controller.cancel();
+
   Future<void> _saveSelection() async {
-    final result = _result;
+    final result = ref.read(scanControllerProvider(_projectPath)).result;
     if (result == null) return;
     if (_selected.isEmpty) {
       _showError('Select at least one page before saving');
       return;
     }
-    setState(() => _saving = true);
+    setState(() {
+      _saving = true;
+      _localError = null;
+    });
     final filtered = _filteredSiteMap(result, _selected);
     try {
       final updated = await ref.read(apiProvider).saveScan(
-        projectPath: widget.project.path,
-        siteMap: filtered,
-      );
+            projectPath: widget.project.path,
+            siteMap: filtered,
+          );
       if (!mounted) return;
       widget.onProjectUpdated(updated);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Saved ${_selected.length} pages to scan.json')),
       );
     } on EngineApiException catch (e) {
-      _setError(e.message);
+      _setLocalError(e.message);
     } catch (e) {
-      _setError(e.toString());
+      _setLocalError(e.toString());
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -161,28 +159,28 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
     if (draft == null) return;
     setState(() {
       _saving = true;
-      _error = null;
+      _localError = null;
     });
     try {
       final created = await ref.read(apiProvider).initProject(
-        path: draft.path,
-        name: draft.name,
-        baseUrl: draft.baseUrl,
-      );
+            path: draft.path,
+            name: draft.name,
+            baseUrl: draft.baseUrl,
+          );
       if (!mounted) return;
       await widget.onSwitchProject(created);
     } on EngineApiException catch (e) {
-      _setError(e.message);
+      _setLocalError(e.message);
     } catch (e) {
-      _setError(e.toString());
+      _setLocalError(e.toString());
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
-  void _setError(String message) {
+  void _setLocalError(String message) {
     if (!mounted) return;
-    setState(() => _error = message);
+    setState(() => _localError = message);
   }
 
   void _showError(String message) {
@@ -191,7 +189,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
   }
 
   void _toggleAll(bool value) {
-    final result = _result;
+    final result = ref.read(scanControllerProvider(_projectPath)).result;
     if (result == null) return;
     setState(() {
       _selected.clear();
@@ -203,10 +201,32 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
     });
   }
 
+  void _onControllerState(ScanState? prev, ScanState next) {
+    final prevResult = prev?.result;
+    final nextResult = next.result;
+    if (nextResult != null && !identical(prevResult, nextResult)) {
+      setState(() {
+        _selected
+          ..clear()
+          ..addAll(
+            nextResult.pages
+                .where((p) => p.error == null)
+                .map((p) => p.url),
+          );
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.fuzz;
-    final busy = _scanning || _saving;
+    ref.listen<ScanState>(
+      scanControllerProvider(_projectPath),
+      _onControllerState,
+    );
+    final state = ref.watch(scanControllerProvider(_projectPath));
+    final busy = state.isBusy || _saving;
+    final errorMessage = _localError ?? state.errorMessage;
     return Scaffold(
       backgroundColor: c.surface0,
       appBar: AppBar(
@@ -228,7 +248,8 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
               child: SizedBox(
                 width: 18,
                 height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2, color: c.accentFill),
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: c.accentFill),
               ),
             ),
         ],
@@ -241,21 +262,27 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _header(context),
+                _header(context, state),
                 const SizedBox(height: 12),
-                _boundsPanel(context),
+                _boundsPanel(context, busy),
                 const SizedBox(height: 12),
-                if (_error != null) ...[
-                  _errorBanner(context, _error!),
+                if (errorMessage != null) ...[
+                  FuzzErrorBanner(message: errorMessage),
                   const SizedBox(height: FuzzSpace.sm),
                 ],
-                if (_scanning)
+                if (state.phase == ScanPhase.cancelled) ...[
+                  _statusBanner(context,
+                      icon: Icons.stop_circle_outlined,
+                      text: 'Scan cancelled'),
+                  const SizedBox(height: FuzzSpace.sm),
+                ],
+                if (state.isBusy)
                   LinearProgressIndicator(
                     minHeight: 4,
                     backgroundColor: c.surface1,
                     valueColor: AlwaysStoppedAnimation(c.accentFill),
                   ),
-                Expanded(child: _results(context)),
+                Expanded(child: _results(context, state)),
               ],
             ),
           ),
@@ -264,8 +291,10 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
     );
   }
 
-  Widget _header(BuildContext context) {
+  Widget _header(BuildContext context, ScanState state) {
     final c = context.fuzz;
+    final busy = state.isBusy || _saving;
+    final result = state.result;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -275,7 +304,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
             children: [
               TextField(
                 controller: _baseUrl,
-                enabled: !(_scanning || _saving),
+                enabled: !busy,
                 decoration: const InputDecoration(
                   labelText: 'Base URL',
                   isDense: true,
@@ -301,15 +330,22 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              FilledButton.icon(
-                onPressed: (_scanning || _saving) ? null : _runScan,
-                icon: const Icon(Icons.travel_explore),
-                label: Text(_result == null ? 'Start scan' : 'Re-scan'),
-              ),
+              if (state.isBusy)
+                OutlinedButton.icon(
+                  onPressed: state.handle == null ? null : _cancelScan,
+                  icon: const Icon(Icons.stop_circle_outlined),
+                  label: const Text('Cancel'),
+                )
+              else
+                FilledButton.icon(
+                  onPressed: _saving ? null : _runScan,
+                  icon: const Icon(Icons.travel_explore),
+                  label: Text(result == null ? 'Start scan' : 'Re-scan'),
+                ),
               if (_baseUrl.text.trim() != _persistedBaseUrl) ...[
                 const SizedBox(height: 6),
                 TextButton.icon(
-                  onPressed: (_scanning || _saving) ? null : _saveAsNewProject,
+                  onPressed: busy ? null : _saveAsNewProject,
                   icon: const Icon(Icons.save_as, size: 18),
                   label: const Text('Save as new project…'),
                 ),
@@ -321,7 +357,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
     );
   }
 
-  Widget _boundsPanel(BuildContext context) {
+  Widget _boundsPanel(BuildContext context, bool busy) {
     final c = context.fuzz;
     return Container(
       decoration: BoxDecoration(
@@ -359,6 +395,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
                       Expanded(
                         child: TextField(
                           controller: _maxDepth,
+                          enabled: !busy,
                           decoration: const InputDecoration(labelText: 'Max depth'),
                           keyboardType: TextInputType.number,
                           onChanged: (_) => setState(() {}),
@@ -368,6 +405,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
                       Expanded(
                         child: TextField(
                           controller: _maxPages,
+                          enabled: !busy,
                           decoration: const InputDecoration(labelText: 'Max pages'),
                           keyboardType: TextInputType.number,
                           onChanged: (_) => setState(() {}),
@@ -377,6 +415,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
                       Expanded(
                         child: TextField(
                           controller: _rateLimit,
+                          enabled: !busy,
                           decoration:
                               const InputDecoration(labelText: 'Rate limit (s)'),
                           keyboardType: TextInputType.number,
@@ -390,6 +429,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
                     controlAffinity: ListTileControlAffinity.leading,
                     dense: true,
                     value: _ignoreRobots,
+                    enabled: !busy,
                     title: Text('Ignore robots.txt',
                         style:
                             FuzzText.body.copyWith(color: c.textPrimary)),
@@ -400,6 +440,7 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
                     controlAffinity: ListTileControlAffinity.leading,
                     dense: true,
                     value: _allowCrossOrigin,
+                    enabled: !busy,
                     title: Text('Allow cross-origin links',
                         style:
                             FuzzText.body.copyWith(color: c.textPrimary)),
@@ -415,16 +456,12 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
     );
   }
 
-  Widget _results(BuildContext context) {
+  Widget _results(BuildContext context, ScanState state) {
     final c = context.fuzz;
-    final result = _result;
+    final result = state.result;
     if (result == null) {
-      if (_scanning) {
-        return const FuzzStateCard(
-          kind: FuzzStateKind.loading,
-          title: 'Crawling…',
-          message: 'Discovering pages from the base URL.',
-        );
+      if (state.isBusy) {
+        return _liveScanBody(context, state);
       }
       return FuzzStateCard(
         kind: FuzzStateKind.empty,
@@ -484,13 +521,94 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
                   if (i < result.pages.length) {
                     return _pageTile(result.pages[i]);
                   }
-                  return _skipTile(result.skipped[i - result.pages.length]);
+                  return _skipRow(
+                    result.skipped[i - result.pages.length].url,
+                    result.skipped[i - result.pages.length].reason,
+                  );
                 },
               ),
             ),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _liveScanBody(BuildContext context, ScanState state) {
+    final c = context.fuzz;
+    final foundCount = state.pagesFound.length;
+    final skippedCount = state.pagesSkipped.length;
+    final total = foundCount + skippedCount;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Text(
+              state.phase == ScanPhase.starting
+                  ? 'Starting scan job…'
+                  : '$foundCount pages found'
+                      '${skippedCount > 0 ? " · $skippedCount skipped" : ""}',
+              style: FuzzText.body.copyWith(color: c.textPrimary),
+            ),
+          ],
+        ),
+        const SizedBox(height: FuzzSpace.md),
+        Expanded(
+          child: total == 0
+              ? const FuzzStateCard(
+                  kind: FuzzStateKind.loading,
+                  title: 'Crawling…',
+                  message: 'Discovering pages from the base URL.',
+                )
+              : Container(
+                  decoration: BoxDecoration(
+                    color: c.surface2,
+                    borderRadius: const BorderRadius.all(FuzzSpace.cardRadius),
+                    border: Border.all(color: c.border, width: 0.5),
+                  ),
+                  child: ClipRRect(
+                    borderRadius:
+                        const BorderRadius.all(FuzzSpace.cardRadius),
+                    child: ListView.separated(
+                      itemCount: total,
+                      separatorBuilder: (_, _) =>
+                          Divider(height: 1, color: c.border),
+                      itemBuilder: (_, i) {
+                        if (i < foundCount) {
+                          return _livePageTile(state.pagesFound[i]);
+                        }
+                        final skip = state.pagesSkipped[i - foundCount];
+                        return _skipRow(skip.url, skip.reason);
+                      },
+                    ),
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _livePageTile(ScanPageFound page) {
+    final c = context.fuzz;
+    final hasError = page.error != null;
+    return ListTile(
+      dense: true,
+      title: Text(
+        page.title?.isNotEmpty == true ? page.title! : page.url,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: FuzzText.body.copyWith(color: c.textPrimary),
+      ),
+      subtitle: Text(
+        hasError ? 'error: ${page.error}' : page.url,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: FuzzText.mono
+            .copyWith(color: hasError ? c.dangerText : c.textMuted),
+      ),
+      trailing: Text('d${page.depth}',
+          style: FuzzText.caption.copyWith(color: c.textMuted)),
     );
   }
 
@@ -532,27 +650,45 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
     );
   }
 
-  Widget _skipTile(ScannedSkip skip) {
+  Widget _skipRow(String url, String reason) {
     final c = context.fuzz;
     return ListTile(
       dense: true,
       leading: Icon(Icons.block, size: 18, color: c.textMuted),
       title: Text(
-        skip.url,
+        url,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: FuzzText.mono.copyWith(color: c.textSecondary),
       ),
       subtitle: Text(
-        'skipped — ${skip.reason}',
+        'skipped — $reason',
         style: FuzzText.caption.copyWith(color: c.textMuted),
       ),
     );
   }
 }
 
-Widget _errorBanner(BuildContext context, String message) =>
-    FuzzErrorBanner(message: message);
+Widget _statusBanner(BuildContext context,
+    {required IconData icon, required String text}) {
+  final c = context.fuzz;
+  return Container(
+    padding: const EdgeInsets.symmetric(
+        horizontal: FuzzSpace.md, vertical: FuzzSpace.sm),
+    decoration: BoxDecoration(
+      color: c.surface2,
+      borderRadius: const BorderRadius.all(FuzzSpace.controlRadius),
+      border: Border.all(color: c.border, width: 0.5),
+    ),
+    child: Row(
+      children: [
+        Icon(icon, size: 18, color: c.textSecondary),
+        const SizedBox(width: 8),
+        Text(text, style: FuzzText.body.copyWith(color: c.textPrimary)),
+      ],
+    ),
+  );
+}
 
 class _SaveAsDraft {
   _SaveAsDraft({required this.path, required this.name, required this.baseUrl});
