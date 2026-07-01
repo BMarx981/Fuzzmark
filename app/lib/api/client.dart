@@ -856,18 +856,6 @@ class FuzzmarkApi {
     );
   }
 
-  Future<ScanResult> runScan({
-    required String projectPath,
-    CrawlBoundsRequest bounds = const CrawlBoundsRequest(),
-  }) async {
-    final result = await runJobToCompletion('scan', {
-      'path': projectPath,
-      ...bounds.toJson(),
-    });
-    final siteMap = result['site_map'] as Map<String, dynamic>;
-    return ScanResult.fromJson(siteMap);
-  }
-
   Future<FuzzmarkProject> saveScan({
     required String projectPath,
     required Map<String, dynamic> siteMap,
@@ -944,19 +932,6 @@ class FuzzmarkApi {
       if (force) 'force': true,
     });
     return FuzzmarkProject.fromJson(res);
-  }
-
-  Future<RunResult> runTest({
-    required String projectPath,
-    required String testRelativePath,
-    bool headed = false,
-  }) async {
-    final result = await runJobToCompletion('run', {
-      'path': projectPath,
-      'test': testRelativePath,
-      if (headed) 'headed': true,
-    });
-    return RunResult.fromJson(result);
   }
 
   Future<RunReport> reportTest({
