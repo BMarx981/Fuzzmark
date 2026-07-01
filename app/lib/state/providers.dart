@@ -5,7 +5,8 @@ import '../engine/engine_process.dart';
 import 'recents.dart';
 
 final apiProvider = Provider<FuzzmarkApi>((ref) {
-  final api = FuzzmarkApi();
+  final engine = ref.watch(engineProvider);
+  final api = FuzzmarkApi(baseUri: engine.baseUri);
   ref.onDispose(api.close);
   return api;
 });

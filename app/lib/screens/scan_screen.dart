@@ -302,17 +302,20 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              TextField(
-                controller: _baseUrl,
-                enabled: !busy,
-                decoration: const InputDecoration(
-                  labelText: 'Base URL',
-                  isDense: true,
+              Padding(
+                padding: const EdgeInsets.all(8),
+                child: TextField(
+                  controller: _baseUrl,
+                  enabled: !busy,
+                  decoration: const InputDecoration(
+                    labelText: 'Base URL',
+                    isDense: true,
+                  ),
+                  style: FuzzText.mono.copyWith(color: c.textPrimary),
+                  keyboardType: TextInputType.url,
+                  autocorrect: false,
+                  onChanged: (_) => setState(() {}),
                 ),
-                style: FuzzText.mono.copyWith(color: c.textPrimary),
-                keyboardType: TextInputType.url,
-                autocorrect: false,
-                onChanged: (_) => setState(() {}),
               ),
               const SizedBox(height: 4),
               Text(
@@ -393,32 +396,41 @@ class _ScanScreenState extends ConsumerState<ScanScreen> {
                   Row(
                     children: [
                       Expanded(
-                        child: TextField(
-                          controller: _maxDepth,
-                          enabled: !busy,
-                          decoration: const InputDecoration(labelText: 'Max depth'),
-                          keyboardType: TextInputType.number,
-                          onChanged: (_) => setState(() {}),
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: TextField(
+                            controller: _maxDepth,
+                            enabled: !busy,
+                            decoration: const InputDecoration(labelText: 'Max depth'),
+                            keyboardType: TextInputType.number,
+                            onChanged: (_) => setState(() {}),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
-                        child: TextField(
-                          controller: _maxPages,
-                          enabled: !busy,
-                          decoration: const InputDecoration(labelText: 'Max pages'),
-                          keyboardType: TextInputType.number,
-                          onChanged: (_) => setState(() {}),
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: TextField(
+                            controller: _maxPages,
+                            enabled: !busy,
+                            decoration: const InputDecoration(labelText: 'Max pages'),
+                            keyboardType: TextInputType.number,
+                            onChanged: (_) => setState(() {}),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
-                        child: TextField(
-                          controller: _rateLimit,
-                          enabled: !busy,
-                          decoration:
-                              const InputDecoration(labelText: 'Rate limit (s)'),
-                          keyboardType: TextInputType.number,
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: TextField(
+                            controller: _rateLimit,
+                            enabled: !busy,
+                            decoration:
+                                const InputDecoration(labelText: 'Rate limit (s)'),
+                            keyboardType: TextInputType.number,
+                          ),
                         ),
                       ),
                     ],

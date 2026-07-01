@@ -228,35 +228,53 @@ class _NewProjectDialog extends StatefulWidget {
 
 class _NewProjectDialogState extends State<_NewProjectDialog> {
   final _form = GlobalKey<FormState>();
-  final _path = TextEditingController();
   final _name = TextEditingController();
   final _baseUrl = TextEditingController();
+  String? _parentDir;
+
+  @override
+  void initState() {
+    super.initState();
+    _name.addListener(() => setState(() {}));
+  }
 
   @override
   void dispose() {
-    _path.dispose();
     _name.dispose();
     _baseUrl.dispose();
     super.dispose();
   }
 
-  Future<void> _chooseDest() async {
+  Future<void> _chooseParent() async {
     final dir = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: 'Choose a folder for the new project',
+      dialogTitle: 'Choose a parent folder (use "New Folder" to create one)',
     );
     if (dir == null) return;
-    final current = _path.text.trim();
-    final base = current.isEmpty ? 'project.json' : current;
-    final filename = base.contains('/') || base.contains('\\') ? 'project.json' : base;
-    _path.text = '$dir/$filename';
+    setState(() => _parentDir = dir);
+  }
+
+  String _slug(String name) {
+    final lower = name.trim().toLowerCase();
+    final replaced = lower.replaceAll(RegExp(r'[^a-z0-9]+'), '-');
+    final trimmed = replaced.replaceAll(RegExp(r'^-+|-+$'), '');
+    return trimmed.isEmpty ? 'project' : trimmed;
+  }
+
+  String? _projectPath() {
+    final parent = _parentDir;
+    final name = _name.text.trim();
+    if (parent == null || name.isEmpty) return null;
+    return '$parent/${_slug(name)}/project.json';
   }
 
   @override
   Widget build(BuildContext context) {
+    final c = context.fuzz;
+    final preview = _projectPath();
     return AlertDialog(
       title: const Text('New project'),
       content: SizedBox(
-        width: 480,
+        width: 520,
         child: Form(
           key: _form,
           child: Column(
@@ -280,28 +298,43 @@ class _NewProjectDialogState extends State<_NewProjectDialog> {
                 validator: (v) =>
                     (v == null || v.trim().isEmpty) ? 'Required' : null,
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
+              Text('Location',
+                  style: FuzzText.label.copyWith(color: c.textMuted)),
+              const SizedBox(height: 6),
               Row(
                 children: [
                   Expanded(
-                    child: TextFormField(
-                      controller: _path,
-                      decoration: const InputDecoration(
-                        labelText: 'Project file path',
-                        hintText: '/path/to/project.json',
+                    child: Text(
+                      _parentDir ?? 'No folder chosen',
+                      style: FuzzText.mono.copyWith(
+                        color: _parentDir == null ? c.textMuted : c.textPrimary,
                       ),
-                      validator: (v) =>
-                          (v == null || v.trim().isEmpty) ? 'Required' : null,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   const SizedBox(width: 8),
-                  IconButton(
-                    icon: const Icon(Icons.folder_open),
-                    tooltip: 'Choose folder',
-                    onPressed: _chooseDest,
+                  OutlinedButton.icon(
+                    onPressed: _chooseParent,
+                    icon: const Icon(Icons.folder_open, size: 16),
+                    label: Text(_parentDir == null
+                        ? 'Choose folder'
+                        : 'Change folder'),
                   ),
                 ],
               ),
+              const SizedBox(height: 8),
+              if (preview != null)
+                Text(
+                  'Will create: $preview',
+                  style: FuzzText.caption.copyWith(color: c.textMuted),
+                )
+              else
+                Text(
+                  'Pick a parent folder — a subfolder named after the project will be created inside it. Use the folder picker\'s "New Folder" button to create a fresh parent.',
+                  style: FuzzText.caption.copyWith(color: c.textMuted),
+                ),
             ],
           ),
         ),
@@ -314,8 +347,15 @@ class _NewProjectDialogState extends State<_NewProjectDialog> {
         FilledButton(
           onPressed: () {
             if (!_form.currentState!.validate()) return;
+            final path = _projectPath();
+            if (path == null) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Choose a parent folder first.')),
+              );
+              return;
+            }
             Navigator.of(context).pop(_NewProjectDraft(
-              path: _path.text.trim(),
+              path: path,
               name: _name.text.trim(),
               baseUrl: _baseUrl.text.trim(),
             ));

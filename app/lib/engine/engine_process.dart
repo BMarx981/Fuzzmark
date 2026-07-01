@@ -13,21 +13,35 @@ class EngineStartupException implements Exception {
 class EngineProcess {
   EngineProcess({
     this.host = '127.0.0.1',
-    this.port = 8765,
     this.bootTimeout = const Duration(seconds: 15),
   });
 
   final String host;
-  final int port;
   final Duration bootTimeout;
 
   Process? _proc;
   bool _ownsProcess = false;
+  Uri? _baseUri;
 
-  Uri get healthUri => Uri.parse('http://$host:$port/api/health');
+  Uri get baseUri {
+    final b = _baseUri;
+    if (b == null) {
+      throw StateError('EngineProcess.baseUri read before start() completed');
+    }
+    return b;
+  }
 
   Future<void> start() async {
-    if (await _isUp()) {
+    final override = Platform.environment['FUZZMARK_ENGINE_URL'];
+    if (override != null && override.isNotEmpty) {
+      final uri = Uri.parse(override);
+      if (!await _pingHealth(uri)) {
+        throw EngineStartupException(
+          'FUZZMARK_ENGINE_URL=$override is set but no engine responded to '
+          '${uri.replace(path: '/api/health')}.',
+        );
+      }
+      _baseUri = uri;
       _ownsProcess = false;
       return;
     }
@@ -40,25 +54,29 @@ class EngineProcess {
       );
     }
 
+    final port = await _pickFreePort();
+    final uri = Uri.parse('http://$host:$port');
+
     _proc = await Process.start(
       bin,
       ['serve', '--host', host, '--port', '$port'],
       mode: ProcessStartMode.normal,
     );
     _ownsProcess = true;
+    _baseUri = uri;
     _proc!.stdout.listen(stdout.add);
     _proc!.stderr.listen(stderr.add);
 
     final deadline = DateTime.now().add(bootTimeout);
     while (DateTime.now().isBefore(deadline)) {
-      if (await _isUp()) return;
+      if (await _pingHealth(uri)) return;
       await Future<void>.delayed(const Duration(milliseconds: 200));
     }
 
     await stop();
     throw EngineStartupException(
       'fuzzmark serve did not become ready within ${bootTimeout.inSeconds}s '
-      '(checked $healthUri).',
+      '(checked ${uri.replace(path: '/api/health')}).',
     );
   }
 
@@ -74,12 +92,20 @@ class EngineProcess {
     }
     _proc = null;
     _ownsProcess = false;
+    _baseUri = null;
   }
 
-  Future<bool> _isUp() async {
+  Future<int> _pickFreePort() async {
+    final socket = await ServerSocket.bind(host, 0);
+    final port = socket.port;
+    await socket.close();
+    return port;
+  }
+
+  Future<bool> _pingHealth(Uri base) async {
     try {
       final res = await http
-          .get(healthUri)
+          .get(base.replace(path: '/api/health'))
           .timeout(const Duration(milliseconds: 500));
       return res.statusCode == 200;
     } catch (_) {
